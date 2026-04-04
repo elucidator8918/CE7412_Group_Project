@@ -1,5 +1,8 @@
 # Does Protein Structural Representation Matter for Enzyme Function Prediction?
 
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-green.svg)](https://www.python.org/downloads/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)](https://pytorch.org/)
+
 **CE7412 Computational and Systems Biology — Course Project (2026)**
 
 > A systematic comparison of four protein representations on the Enzyme Commission
