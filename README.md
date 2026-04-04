@@ -369,4 +369,4 @@ training:
 
 ## License
 
-This project is for academic purposes (CE7412, NTU). Code is available for educational use.
+This project is licensed under the [MIT License](LICENSE).
