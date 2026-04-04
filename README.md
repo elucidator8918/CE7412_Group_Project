@@ -188,6 +188,9 @@ python scripts/train.py --quick
 
 This caps training at 50 epochs and 250 samples/class.
 
+![training_curves](outputs_full/figures/fig_training_curves.png)
+![model_comparison](outputs_full/figures/fig_model_comparison.png)
+
 ### View training logs
 
 ```bash
@@ -199,7 +202,7 @@ cat outputs_full/logs/training.log
 ```
 
 ---
-
+![model_comparison](outputs_full/figures/fig_roc_curves.png)
 ## Using Pretrained Models
 
 Best model checkpoints are saved in `outputs_full/checkpoints/`. To load and run inference:
