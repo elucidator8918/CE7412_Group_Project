@@ -1,0 +1,134 @@
+# ============================================================================
+# CE7412 Enzyme Classification — Master Configuration
+# ============================================================================
+# Project: "Does Protein Structural Representation Matter for Enzyme Function Prediction?"
+# ============================================================================
+
+seed: 42
+
+# ── Paths ──────────────────────────────────────────────────────────────────
+paths:
+  data_root: "./data"
+  output_dir: "./outputs"
+  esm_cache: "./data/esm_cache"
+  log_dir: "./outputs/logs"
+  checkpoint_dir: "./outputs/checkpoints"
+  figures_dir: "./outputs/figures"
+
+# ── Dataset ────────────────────────────────────────────────────────────────
+dataset:
+  name: "EnzymeClassTask"
+  n_classes: 7
+  split: "random"
+  split_similarity_threshold: 0.7
+  max_per_class: 0                  # 0 = use all available data
+  eps_default: 8.0                  # angstrom contact radius
+
+# ── Feature engineering ────────────────────────────────────────────────────
+features:
+  # Node features
+  use_onehot: true                  # 20-dim amino acid one-hot
+  use_physicochemical: true         # ~10-dim physicochemical properties
+  use_sasa: true                    # 2-dim SASA + RSA solvent accessibility
+  use_esm2: true                    # 320-dim ESM-2 per-residue embeddings
+  esm2_model: "esm2_t6_8M_UR50D"   # smallest ESM-2: fast, runs on CPU
+  esm2_layer: 6                     # representation layer to extract
+  esm2_dim: 320
+  use_degree: true                  # 1-dim normalized node degree
+  use_positional: true              # 5-dim: linear position + sin/cos encoding
+
+  # Edge features
+  use_edge_distance: true           # RBF-encoded Ca-Ca distance
+  rbf_centers: 16                   # number of Gaussian RBF bins
+  rbf_sigma: 0.5                    # Gaussian width
+  use_edge_seqsep: true             # sequence separation |i - j|
+
+# ── Model architectures ───────────────────────────────────────────────────
+models:
+  seq_mlp:
+    hidden: 256
+    n_layers: 3
+    dropout: 0.4
+
+  residue_mlp:
+    hidden: 256
+    n_layers: 3
+    dropout: 0.4
+
+  gat:                              # GATv2-based model (replaces vanilla GCN)
+    hidden: 256
+    n_layers: 4
+    heads: 4
+    dropout: 0.3
+    attn_dropout: 0.1
+    residual: true
+    pool_strategy: "multi"          # "mean", "max", "attention", "multi"
+
+  soft_blob_gat:                    # SoftBlobGCN with GATv2 backbone
+    hidden: 256
+    n_layers: 4
+    heads: 4
+    n_blobs: 8
+    dropout: 0.3
+    attn_dropout: 0.1
+    blob_mlp_layers: 2
+    cluster_attn_heads: 4
+    tau_start: 1.0
+    tau_end: 0.1
+    pool_strategy: "multi"          # for the global embedding query
+
+# ── Training ───────────────────────────────────────────────────────────────
+training:
+  epochs: 300
+  batch_size: 64
+  optimizer: "adamw"
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  gradient_clip: 1.0
+
+  # Scheduler
+  scheduler: "cosine_warmup"        # "step", "cosine", "cosine_warmup"
+  warmup_epochs: 10
+  min_lr: 1.0e-6
+  cosine_T0: 50                     # for cosine with warm restarts
+
+  # Early stopping
+  patience: 40
+  min_delta: 1.0e-4
+
+  # Loss
+  loss: "focal"                     # "ce", "focal", "label_smoothing"
+  label_smoothing: 0.1
+  focal_gamma: 2.0
+  focal_alpha: null                 # null = compute from class frequencies
+
+  # Augmentation
+  augmentation:
+    edge_drop_rate: 0.1
+    feature_mask_rate: 0.1
+    enabled: true
+
+# ── Ablation studies ───────────────────────────────────────────────────────
+ablations:
+  eps_values: [4.0, 8.0, 12.0]
+  blob_counts: [3, 5, 8, 12]
+  feature_sets:
+    - "onehot_only"
+    - "onehot+physico"
+    - "onehot+physico+esm2"
+    - "full"
+
+# ── Ensemble ───────────────────────────────────────────────────────────────
+ensemble:
+  enabled: true
+  n_seeds: 5
+  seeds: [42, 123, 456, 789, 1024]
+
+# ── Logging ────────────────────────────────────────────────────────────────
+logging:
+  use_wandb: false
+  wandb_project: "enzyme-classification"
+  wandb_entity: null
+  log_every_n_epochs: 5
+  save_best_model: true
+  save_last_model: true

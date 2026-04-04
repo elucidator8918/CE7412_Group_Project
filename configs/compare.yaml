@@ -1,0 +1,116 @@
+# ============================================================================
+# Fair comparison config — matches original notebook settings
+# 250/class, 150 epochs, to prove new architecture beats old
+# ============================================================================
+
+seed: 42
+
+paths:
+  data_root: "./data"
+  output_dir: "./outputs_compare"
+  esm_cache: "./data/esm_cache"
+  log_dir: "./outputs_compare/logs"
+  checkpoint_dir: "./outputs_compare/checkpoints"
+  figures_dir: "./outputs_compare/figures"
+
+dataset:
+  name: "EnzymeClassTask"
+  n_classes: 7
+  split: "random"
+  split_similarity_threshold: 0.7
+  max_per_class: 250               # same as original
+  eps_default: 8.0
+
+features:
+  use_onehot: true
+  use_physicochemical: true
+  use_sasa: true
+  use_esm2: true
+  esm2_model: "esm2_t6_8M_UR50D"
+  esm2_layer: 6
+  esm2_dim: 320
+  use_degree: true
+  use_positional: true
+  use_edge_distance: true
+  rbf_centers: 16
+  rbf_sigma: 0.5
+  use_edge_seqsep: true
+
+models:
+  seq_mlp:
+    hidden: 256
+    n_layers: 3
+    dropout: 0.4
+
+  residue_mlp:
+    hidden: 256
+    n_layers: 3
+    dropout: 0.4
+
+  gat:
+    hidden: 256
+    n_layers: 3                     # reduced from 4 → 3 for small data
+    heads: 4
+    dropout: 0.3
+    attn_dropout: 0.1
+    residual: true
+    pool_strategy: "multi"
+
+  soft_blob_gat:
+    hidden: 256
+    n_layers: 3                     # reduced from 4 → 3 for small data
+    heads: 4
+    n_blobs: 8
+    dropout: 0.3
+    attn_dropout: 0.1
+    blob_mlp_layers: 2
+    cluster_attn_heads: 4
+    tau_start: 1.0
+    tau_end: 0.1
+    pool_strategy: "multi"
+
+training:
+  epochs: 150                       # same as original
+  batch_size: 32                    # same as original
+  optimizer: "adamw"
+  lr: 5.0e-4                       # slightly higher for faster convergence
+  weight_decay: 1.0e-4
+  gradient_clip: 1.0
+
+  scheduler: "cosine_warmup"
+  warmup_epochs: 5
+  min_lr: 1.0e-6
+  cosine_T0: 50
+
+  patience: 25                      # same ballpark as original (was 20)
+  min_delta: 1.0e-4
+
+  # FIX: softer focal loss — gamma=1.0 is much safer for small datasets
+  loss: "focal"
+  label_smoothing: 0.05
+  focal_gamma: 1.0                  # was 2.0 — too aggressive
+  focal_alpha: null
+
+  # FIX: disable augmentation for fair comparison (original had none)
+  augmentation:
+    edge_drop_rate: 0.0
+    feature_mask_rate: 0.0
+    enabled: false
+
+ablations:
+  eps_values: [4.0, 8.0, 12.0]
+  blob_counts: [3, 5, 8, 12]
+  feature_sets: ["onehot_only", "onehot+physico", "onehot+physico+esm2", "full"]
+
+ensemble:
+  enabled: true
+  n_seeds: 5
+  seeds: [42, 123, 456, 789, 1024]
+
+logging:
+  use_wandb: false
+  wandb_project: "enzyme-classification"
+  wandb_entity: null
+  log_every_n_epochs: 5
+  save_best_model: true
+  save_last_model: true

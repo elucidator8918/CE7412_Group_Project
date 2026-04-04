@@ -1,0 +1,2 @@
+method,n_seeds,accuracy,macro_f1,macro_auroc
+ensemble,5,0.9282970550576184,0.8981885409101446,0.9551946383600359

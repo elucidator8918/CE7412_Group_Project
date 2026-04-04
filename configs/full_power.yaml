@@ -1,0 +1,107 @@
+# ============================================================================
+# FULL POWER CONFIG — Maximum performance
+# Uses ALL 15K proteins, properly sized models, tuned for A6000
+# ============================================================================
+
+seed: 42
+
+paths:
+  data_root: "./data"
+  output_dir: "./outputs_full"
+  esm_cache: "./data/esm_cache_650M"
+  log_dir: "./outputs_full/logs"
+  checkpoint_dir: "./outputs_full/checkpoints"
+  figures_dir: "./outputs_full/figures"
+
+dataset:
+  name: "EnzymeClassTask"
+  n_classes: 7
+  split: "random"
+  split_similarity_threshold: 0.7
+  max_per_class: 0                  # USE ALL DATA — this is the #1 fix
+  eps_default: 8.0
+
+features:
+  use_onehot: true
+  use_physicochemical: true
+  use_sasa: true
+  use_esm2: true
+  esm2_model: "esm2_t33_650M_UR50D"  # 650M params, 1280-dim — massive upgrade from 8M/320-dim
+  esm2_layer: 33
+  esm2_dim: 1280
+  use_degree: true
+  use_positional: true
+  use_edge_distance: true
+  rbf_centers: 16
+  rbf_sigma: 0.5
+  use_edge_seqsep: true
+
+models:
+  seq_mlp:
+    hidden: 256
+    n_layers: 3
+    dropout: 0.3
+
+  residue_mlp:
+    hidden: 512
+    n_layers: 3
+    dropout: 0.3
+
+  # GIN — lightweight but provably most powerful MP-GNN
+  gin:
+    hidden: 256                     # can afford larger with 15K samples + rich features
+    n_layers: 4
+    dropout: 0.3
+
+  # SoftBlobGIN — blob pooling with GIN backbone
+  soft_blob_gin:
+    hidden: 256
+    n_layers: 4
+    n_blobs: 8
+    dropout: 0.3
+    tau_start: 1.0
+    tau_end: 0.1
+
+training:
+  epochs: 200
+  batch_size: 64
+  optimizer: "adamw"
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  gradient_clip: 1.0
+
+  scheduler: "cosine_warmup"
+  warmup_epochs: 10
+  min_lr: 1.0e-6
+  cosine_T0: 50
+
+  patience: 30
+  min_delta: 1.0e-4
+
+  loss: "focal"
+  label_smoothing: 0.05
+  focal_gamma: 1.0
+  focal_alpha: null
+
+  augmentation:
+    edge_drop_rate: 0.05
+    feature_mask_rate: 0.05
+    enabled: true
+
+ablations:
+  eps_values: [4.0, 8.0, 12.0]
+  blob_counts: [3, 5, 8, 12]
+  feature_sets: ["onehot_only", "onehot+physico", "onehot+physico+esm2", "full"]
+
+ensemble:
+  enabled: true
+  n_seeds: 5
+  seeds: [42, 123, 456, 789, 1024]
+
+logging:
+  use_wandb: false
+  wandb_project: "enzyme-classification"
+  wandb_entity: null
+  log_every_n_epochs: 5
+  save_best_model: true
+  save_last_model: true
