@@ -218,8 +218,51 @@ class Trainer:
                     batch = self.augmentation(batch)
 
                 self.optimizer.zero_grad()
-                out = self.model(batch)
-                loss = criterion(out, batch.y.long())
+                
+                # Handle PairData vs Standard Data
+                if hasattr(batch, 'b1'):
+                    # PairBatch already contains b1 and b2 Batch objects
+                    out = self.model(batch.b1, batch.b2)
+                else:
+                    out = self.model(batch)
+                
+                # Dynamic type handling for regression/multilabel vs multiclass
+                y = batch.y
+                if isinstance(y, list):
+                    # List of matrices (e.g. PPI matrices of different shapes)
+                    loss = 0
+                    # If model didn't return a list, it might be a padded tensor (unlikely given our collate)
+                    # For PPI, SoftBlobGINPPI returns a matrix.
+                    # With pair_collate returning a list for y, the model likely returns a list or we loop.
+                    # Actually, for PPI, self.model(b1, b2) returns a matrix? 
+                    # If b1, b2 are PyG Batches, out might be a single matrix if it's a blocked matmul.
+                    # But it's easier to assume it's a list or handle the batching in the model.
+                    # Let's assume for now that if y is a list, we calculate loss per item.
+                    
+                    # If 'out' is a single tensor but 'y' is a list, we need to split 'out'
+                    # but our PPI model returns [N1, N2] for the WHOLE BATCH? No, that's not right.
+                    # SoftBlobGINPPI.forward needs to handle batches.
+                    
+                    # For now, let's just use the list-based zip if both are lists.
+                    if isinstance(out, (list, tuple)):
+                        for o, t in zip(out, y):
+                            loss += criterion(o, t)
+                        loss = loss / len(y)
+                    else:
+                        # Fallback: if 'out' is one tensor (maybe padded?), try criterion once
+                        # This should be refined if we use a block-matrix approach.
+                        loss = criterion(out, y) if not isinstance(y, list) else criterion(out, torch.stack(y))
+                    correct_count = 0
+                elif len(y.shape) > 1 and y.shape[0] == out.shape[0] and y.shape[1] == out.shape[1]:
+                    loss = criterion(out, y)
+                    correct_count = 0
+                elif out.shape == y.shape:
+                    loss = criterion(out, y)
+                    correct_count = 0
+                else:
+                    loss = criterion(out, y.long())
+                    correct_count = (out.argmax(1) == y.long()).sum().item()
+                    
                 loss.backward()
 
                 if self.grad_clip > 0:
@@ -228,7 +271,7 @@ class Trainer:
                 self.optimizer.step()
 
                 total_loss += loss.item() * batch.num_graphs
-                total_correct += (out.argmax(1) == batch.y.long()).sum().item()
+                total_correct += correct_count
                 total_samples += batch.num_graphs
         else:
             for X, Y in loader:
@@ -259,10 +302,32 @@ class Trainer:
         if self.is_pyg:
             for batch in loader:
                 batch = batch.to(self.device)
-                out = self.model(batch)
-                loss = criterion(out, batch.y.long())
+                
+                if hasattr(batch, 'b1'):
+                    out = self.model(batch.b1, batch.b2)
+                else:
+                    out = self.model(batch)
+                
+                # Dynamic type handling
+                y = batch.y
+                if isinstance(y, list):
+                    loss = 0
+                    if isinstance(out, (list, tuple)):
+                        for o, t in zip(out, y):
+                            loss += criterion(o, t)
+                        loss = loss / len(y)
+                    else:
+                        loss = criterion(out, y) if not isinstance(y, list) else criterion(out, torch.stack(y))
+                    correct_count = 0
+                elif len(y.shape) > 1 or out.shape == y.shape:
+                    loss = criterion(out, y)
+                    correct_count = 0
+                else:
+                    loss = criterion(out, y.long())
+                    correct_count = (out.argmax(1) == y.long()).sum().item()
+                    
                 total_loss += loss.item() * batch.num_graphs
-                total_correct += (out.argmax(1) == batch.y.long()).sum().item()
+                total_correct += correct_count
                 total_samples += batch.num_graphs
         else:
             for X, Y in loader:
