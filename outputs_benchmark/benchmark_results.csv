@@ -1,6 +1,10 @@
-task,status,task_type,n_classes,n_params,train_time_s,total_time_s,accuracy,precision,recall,Fmax,reason,time_s,mse,r2,mcc,auroc
-EnzymeClassTask,completed,graph_multiclass,7.0,1121423.0,2948.229801416397,3018.201455831528,0.9142125480153648,0.861844093262393,0.8670362144213847,,,,,,,
-GeneOntologyTask,completed,graph_multilabel,5127.0,2437263.0,5183.948649644852,5288.660096168518,,,,0.7434803486881723,,,,,,
-StructuralClassTask,completed,graph_multiclass,3042.0,1901418.0,4733.513041257858,4744.030286073685,0.6984126984126984,0.4640554480980012,0.4756608639587363,,,,,,,
-LigandAffinityTask,completed,graph_regression,1.0,1119881.0,2932.1463634967804,2968.8344044685364,,,,,,,2.2487452030181885,0.4551028609275818,,
-BindingSiteDetectionTask,completed,node_binary,2.0,1150721.0,1499.2810952663422,1529.3508203029633,0.9424451811319248,,,,,,,,0.7915480526152584,0.970121177147022
+task,status,task_type,n_classes,n_params,train_time_s,total_time_s,accuracy,precision,recall,Fmax,reason,time_s,mse,r2,mcc,auroc,spearman,pearson
+EnzymeClassTask,completed,graph_multiclass,7.0,1121423.0,2948.229801416397,3018.201455831528,0.9142125480153648,0.861844093262393,0.8670362144213847,,,,,,,,,
+GeneOntologyTask,completed,graph_multilabel,5127.0,2437263.0,5183.948649644852,5288.660096168518,,,,0.7434803486881723,,,,,,,,
+StructuralClassTask,completed,graph_multiclass,3042.0,1901418.0,4733.513041257858,4744.030286073685,0.6984126984126984,0.4640554480980012,0.4756608639587363,,,,,,,,,
+LigandAffinityTask,completed,graph_regression,1.0,1119881.0,2932.1463634967804,2968.8344044685364,,,,,,,2.2487452030181885,0.4551028609275818,,,,
+BindingSiteDetectionTask,completed,node_binary,2.0,1150721.0,1499.2810952663422,1529.3508203029633,0.9424451811319248,,,,,,,,0.7915480526152584,0.970121177147022,,
+ProteinFamilyTask,completed,graph_multiclass,5163.0,2446515.0,20373.307009220123,20413.730146169662,0.8419023136246787,0.6392368103737968,0.6546538250003198,,,,,,,,,
+StructureSimilarityTask,completed,pair_regression,1.0,2169482.0,70148.1069715023,70161.63839912415,,,,,,,0.001777890487574,,,,0.7241785073940215,
+ProteinProteinInterfaceTask,failed,node_binary,,,,,,,,,"CUDA out of memory. Tried to allocate 974.00 MiB. GPU 0 has a total capacity of 15.46 GiB of which 972.31 MiB is free. Including non-PyTorch memory, this process has 14.40 GiB memory in use. Of the allocated memory 13.66 GiB is allocated by PyTorch, and 483.20 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)",55.37855005264282,,,,,,
+StructureSearchTask,completed,pair_retrieval,2.0,2169739.0,132.86452054977417,150.9735815525055,,,,,,,958.5519409179688,0.0,,,,

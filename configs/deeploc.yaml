@@ -1,0 +1,70 @@
+# ============================================================================
+# DeepLoc-2.1 Subcellular Localization Config
+# Uses SoftBlobGIN with ESM-2 features (same architecture as ProteinShake benchmark)
+# ============================================================================
+
+seed: 42
+
+paths:
+  data_root: "./deeploc_data"
+  esm_cache: "./data/esm_cache_650M/DeepLoc"
+  output_dir: "./outputs_deeploc"
+  log_dir: "./outputs_deeploc/logs"
+  checkpoint_dir: "./outputs_deeploc/checkpoints"
+
+dataset:
+  train_csv: "Swissprot_Train_Validation_dataset.csv"
+  test_csv: "hpa_testset.csv"
+  val_partition: 4           # Use partition 4 as validation set
+  max_seq_len: 1000          # Truncate sequences longer than this
+  k_neighbors: 30            # Number of sequence neighbors to connect
+
+# Same features as ProteinShake benchmark (full_power.yaml)
+features:
+  use_onehot: true
+  use_physicochemical: true
+  use_sasa: false             # 3D feature disabled
+  use_esm2: true
+  esm2_model: "esm2_t33_650M_UR50D"
+  esm2_layer: 33
+  esm2_dim: 1280
+  use_degree: true
+  use_positional: true
+  use_edge_distance: false    # 3D feature disabled
+  use_edge_seqsep: true       # Populated from sequence position
+
+model:
+  type: "soft_blob_gin"
+  hidden: 256
+  n_layers: 4
+  n_blobs: 8
+  dropout: 0.5
+  tau_start: 1.0
+  tau_end: 0.1
+
+training:
+  epochs: 150
+  batch_size: 16
+  lr: 0.0003
+  weight_decay: 0.01
+  patience: 30
+  warmup_epochs: 5
+  num_workers: 4
+  gradient_clip: 1.0
+  augmentation:
+    enabled: true
+    edge_drop_rate: 0.15
+    feature_mask_rate: 0.15
+
+# 10 subcellular localization classes (multi-label)
+localization_classes:
+  - Cytoplasm
+  - Nucleus
+  - Extracellular
+  - Cell membrane
+  - Mitochondrion
+  - Plastid
+  - Endoplasmic reticulum
+  - Lysosome/Vacuole
+  - Golgi apparatus
+  - Peroxisome

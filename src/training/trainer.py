@@ -227,31 +227,26 @@ class Trainer:
                     out = self.model(batch)
                 
                 # Dynamic type handling for regression/multilabel vs multiclass
-                y = batch.y
-                if isinstance(y, list):
-                    # List of matrices (e.g. PPI matrices of different shapes)
-                    loss = 0
-                    # If model didn't return a list, it might be a padded tensor (unlikely given our collate)
-                    # For PPI, SoftBlobGINPPI returns a matrix.
-                    # With pair_collate returning a list for y, the model likely returns a list or we loop.
-                    # Actually, for PPI, self.model(b1, b2) returns a matrix? 
-                    # If b1, b2 are PyG Batches, out might be a single matrix if it's a blocked matmul.
-                    # But it's easier to assume it's a list or handle the batching in the model.
-                    # Let's assume for now that if y is a list, we calculate loss per item.
-                    
-                    # If 'out' is a single tensor but 'y' is a list, we need to split 'out'
-                    # but our PPI model returns [N1, N2] for the WHOLE BATCH? No, that's not right.
-                    # SoftBlobGINPPI.forward needs to handle batches.
-                    
-                    # For now, let's just use the list-based zip if both are lists.
-                    if isinstance(out, (list, tuple)):
+                # Use batch.y if available, otherwise pass the whole batch (for MTL/custom losses)
+                y = batch.y if batch.y is not None else batch
+                if isinstance(out, (list, tuple)):
+                    # Multi-output model (e.g. MTL)
+                    if hasattr(criterion, "forward"):
+                        # Custom criterion that handles lists (like DeepLocMTLLoss)
+                        loss = criterion(out, y)
+                    elif isinstance(y, (list, tuple)):
+                        # Standard list-to-list comparison
+                        loss = 0
                         for o, t in zip(out, y):
                             loss += criterion(o, t)
                         loss = loss / len(y)
                     else:
-                        # Fallback: if 'out' is one tensor (maybe padded?), try criterion once
-                        # This should be refined if we use a block-matrix approach.
-                        loss = criterion(out, y) if not isinstance(y, list) else criterion(out, torch.stack(y))
+                        # Fallback
+                        loss = criterion(out[0], y)
+                    correct_count = 0
+                elif not hasattr(y, "shape"):
+                    # y is likely a Batch object, pass it directly to criterion
+                    loss = criterion(out, y)
                     correct_count = 0
                 elif len(y.shape) > 1 and y.shape[0] == out.shape[0] and y.shape[1] == out.shape[1]:
                     loss = criterion(out, y)
@@ -309,15 +304,17 @@ class Trainer:
                     out = self.model(batch)
                 
                 # Dynamic type handling
-                y = batch.y
-                if isinstance(y, list):
-                    loss = 0
-                    if isinstance(out, (list, tuple)):
-                        for o, t in zip(out, y):
-                            loss += criterion(o, t)
-                        loss = loss / len(y)
+                y = batch.y if batch.y is not None else batch
+                if isinstance(out, (list, tuple)):
+                    if hasattr(criterion, "forward"):
+                        loss = criterion(out, y)
+                    elif isinstance(y, (list, tuple)):
+                        loss = sum(criterion(o, t) for o, t in zip(out, y)) / len(y)
                     else:
-                        loss = criterion(out, y) if not isinstance(y, list) else criterion(out, torch.stack(y))
+                        loss = criterion(out[0], y)
+                    correct_count = 0
+                elif not hasattr(y, "shape"):
+                    loss = criterion(out, y)
                     correct_count = 0
                 elif len(y.shape) > 1 or out.shape == y.shape:
                     loss = criterion(out, y)

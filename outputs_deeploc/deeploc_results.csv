@@ -1,0 +1,2 @@
+fmax,best_thresholds,auroc_Nucleus,mcc_Nucleus,auroc_Mitochondrion,mcc_Mitochondrion,auroc_Golgi apparatus,mcc_Golgi apparatus,auroc_macro,mcc_macro,hamming_accuracy,f1_micro,f1_macro
+0.18333333128935186,[0.01 0.01 0.5  0.5  0.5  0.5  0.5  0.5  0.5  0.5 ],1.0,0.0,0.5,0.0,0.0,0.0,0.5,0.0,0.62,0.24,0.075

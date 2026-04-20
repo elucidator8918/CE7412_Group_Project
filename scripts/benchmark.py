@@ -362,9 +362,15 @@ def train_and_evaluate_task(task_name, task_class, cfg, gin_cfg, device, logger,
         # 3. Build loss
         criterion = build_loss(task_type, n_classes, cfg)
 
-        # 4. Override epochs for dummy/quick mode
+        # 4. Override configs from task_overrides and dummy/quick mode
         cfg_copy = dict(cfg)
         cfg_copy["training"] = dict(cfg["training"])
+        
+        # Apply task-specific overrides from yaml
+        overrides = cfg.get("task_overrides", {}).get(task_name, {})
+        for override_k, override_v in overrides.items():
+            cfg_copy["training"][override_k] = override_v
+            
         if quick:
             cfg_copy["training"]["epochs"] = 1
             cfg_copy["training"]["patience"] = 1
