@@ -19,19 +19,20 @@ dataset:
   max_seq_len: 1000          # Truncate sequences longer than this
   k_neighbors: 30            # Number of sequence neighbors to connect
 
-# Same features as ProteinShake benchmark (full_power.yaml)
+# Same features as ProteinShake benchmark
 features:
   use_onehot: true
   use_physicochemical: true
-  use_sasa: false             # 3D feature disabled
+  use_sasa: true              # 3D feature re-enabled
   use_esm2: true
   esm2_model: "esm2_t33_650M_UR50D"
   esm2_layer: 33
   esm2_dim: 1280
   use_degree: true
   use_positional: true
-  use_edge_distance: false    # 3D feature disabled
+  use_edge_distance: true     # 3D feature re-enabled
   use_edge_seqsep: true       # Populated from sequence position
+  structure_dir: "./deeploc_data/structures"
 
 model:
   type: "soft_blob_gin"
@@ -41,6 +42,7 @@ model:
   dropout: 0.5
   tau_start: 1.0
   tau_end: 0.1
+  use_global_skip: true       # Enabled for Pure ESM ablation experiment
 
 training:
   epochs: 150

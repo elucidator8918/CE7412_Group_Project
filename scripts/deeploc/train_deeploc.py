@@ -14,6 +14,7 @@ import logging
 import os
 import sys
 import time
+import shutil
 from pathlib import Path
 
 # Fix PyTorch OpenMP thread explosion on high-core HPC nodes
@@ -66,24 +67,31 @@ def setup_logging(log_dir: str):
 
 
 class SoftBlobGIN_MTL(SoftBlobGIN):
-    """SoftBlobGIN with Dual Read-Out Heads + Global ESM Skip Connection."""
+    """SoftBlobGIN with Gated Fusion + Dual Read-Out Heads."""
     def __init__(self, in_ch, hidden, n_loc_classes=10, n_mem_classes=4, esm_skip_dim=0, **kwargs):
         super().__init__(in_ch, hidden, n_classes=n_loc_classes, **kwargs)
         
         self.esm_skip_dim = esm_skip_dim
-        # total_dim = graph embedding (hidden + blob_hidden) + raw esm pool
-        # hidden*2 comes from forward_internal which cat(global_mean, blob_max)
-        total_dim = hidden * 2 + esm_skip_dim
+        # Graph embedding dim is hidden * 2 (global_mean + blob_max)
+        self.graph_dim = hidden * 2
+        
+        if esm_skip_dim > 0:
+            # Gated fusion to learn how to weigh global vs local context
+            self.esm_proj = nn.Linear(esm_skip_dim, self.graph_dim)
+            self.gate = nn.Sequential(
+                nn.Linear(self.graph_dim * 2, 1),
+                nn.Sigmoid()
+            )
         
         self.clf_loc = nn.Sequential(
-            nn.Linear(total_dim, hidden),
+            nn.Linear(self.graph_dim, hidden),
             nn.BatchNorm1d(hidden),
             nn.ReLU(),
             nn.Dropout(kwargs.get("dropout", 0.5)),
             nn.Linear(hidden, n_loc_classes),
         )
         self.clf_mem = nn.Sequential(
-            nn.Linear(total_dim, hidden),
+            nn.Linear(self.graph_dim, hidden),
             nn.BatchNorm1d(hidden),
             nn.ReLU(),
             nn.Dropout(kwargs.get("dropout", 0.5)),
@@ -92,23 +100,27 @@ class SoftBlobGIN_MTL(SoftBlobGIN):
         del self.clf
 
     def forward(self, data, return_blobs=False):
-        z = self.forward_internal(data) # [B, hidden*2]
+        z_graph = self.forward_internal(data) # [B, hidden*2]
         
-        # Concatenate global ESM embedding if available, otherwise zeros
         if self.esm_skip_dim > 0:
             if hasattr(data, "global_x_esm"):
-                z = torch.cat([z, data.global_x_esm], dim=-1)
+                z_esm = data.global_x_esm
             else:
-                # Fallback to zeros to maintain shape [B, hidden*2 + esm_skip_dim]
-                zeros = torch.zeros(z.shape[0], self.esm_skip_dim, device=z.device)
-                z = torch.cat([z, zeros], dim=-1)
+                z_esm = torch.zeros(z_graph.shape[0], self.esm_skip_dim, device=z_graph.device)
+            
+            # Gated residual fusion
+            z_esm_proj = F.relu(self.esm_proj(z_esm))
+            # learnable gate: how much ESM vs how much GIN
+            g = self.gate(torch.cat([z_graph, z_esm_proj], dim=-1))
+            z = (1 - g) * z_graph + g * z_esm_proj
+        else:
+            z = z_graph
             
         out_loc = self.clf_loc(z)
         out_mem = self.clf_mem(z)
         out = [out_loc, out_mem]
         
         if return_blobs:
-            import torch.nn.functional as F
             x, _ = self._encode(data)
             assign = F.softmax(self.blob_head(x), dim=-1)
             return out, assign
@@ -184,7 +196,7 @@ def build_model(feat_dim: int, edge_dim: int, n_classes: int, model_cfg: dict, f
         dropout=model_cfg.get("dropout", 0.5),
         tau_start=model_cfg.get("tau_start", 1.0),
         tau_end=model_cfg.get("tau_end", 0.1),
-        esm_skip_dim=feat_cfg.get("esm2_dim", 1280) if feat_cfg.get("use_esm2") else 0,
+        esm_skip_dim=feat_cfg.get("esm2_dim", 1280) if (feat_cfg.get("use_esm2") and model_cfg.get("use_global_skip", True)) else 0,
     ).to(device)
     return model
 
@@ -287,9 +299,9 @@ def main():
                 max_seq_len=max_seq_len, batch_size=4,
             )
 
-
-
-
+        # Clear the RAM cache — rely on disk cache during training
+        esm_extractor.clear_ram_cache()
+        logger.info("Cleared ESM-2 RAM cache — using disk-only mode for training.")
 
     # ------------------------------------------------------------------
     # 2. Dataset Construction
@@ -350,8 +362,6 @@ def main():
         )
         if args.quick:
             test_ds.df = test_ds.df.head(5)
-
-
 
     # DataLoaders
     bs = train_cfg.get("batch_size", 32)
@@ -446,12 +456,14 @@ def main():
         
         # Filter metrics to only show HPA-present classes for clarity
         hpa_present = [c for c in LOCALIZATION_CLASSES if c in hpa_label_cols]
-        filtered_metrics = {k: v for k, v in metrics.items() if not any(c in k for c in LOCALIZATION_CLASSES if c not in hpa_present)}
-        # But we still want macro metrics from the relevant ones
+        # Only report metrics for classes actually present in HPA to avoid deflating macro-averages
         logger.info("=" * 50)
-        logger.info("HPA Test Set Results:")
+        logger.info(f"HPA Test Set Results (Classes present: {len(hpa_present)}/10):")
         for k, v in metrics.items():
-            if k != "best_thresholds":
+            if k == "best_thresholds": continue
+            # Check if this metric belongs to an absent class
+            is_absent = any((c in k and c not in hpa_present) for c in LOCALIZATION_CLASSES)
+            if not is_absent:
                 logger.info(f"  {k}: {v:.4f}")
 
         # Save results

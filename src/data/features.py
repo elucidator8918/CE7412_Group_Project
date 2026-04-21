@@ -155,6 +155,19 @@ class ESM2Extractor:
             torch.cuda.empty_cache()
             logger.info("ESM-2 model unloaded from memory.")
 
+    def clear_ram_cache(self):
+        """Clear the in-memory cache of embeddings."""
+        self._ram_cache = {}
+        logger.debug("ESM-2 RAM cache cleared.")
+
+    def clear_disk_cache(self):
+        """Delete all cached .pt files from disk."""
+        if self.cache_dir.exists():
+            import shutil
+            shutil.rmtree(self.cache_dir)
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"ESM-2 disk cache cleared: {self.cache_dir}")
+
     def extract_batch(self, proteins: list, batch_size: int = 8) -> dict:
         """Extract embeddings for a batch of (id, sequence) tuples."""
         results = {}
