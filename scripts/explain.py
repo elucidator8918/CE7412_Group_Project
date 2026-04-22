@@ -39,12 +39,18 @@ from src.explainability.metrics import (
 )
 from src.explainability.prototypes import ClassPrototypes
 from src.explainability.visualization import (
+    plot_aa_enrichment,
     plot_class_prototypes,
+    plot_contact_distance_distribution,
     plot_edge_importance_examples,
     plot_fidelity_curves,
     plot_feature_group_importance,
     plot_method_comparison,
+    plot_physicochemical_importance,
     plot_position_importance,
+    plot_sasa_vs_importance,
+    plot_sequence_separation_importance,
+    plot_spatial_clustering,
 )
 from src.models.gin import GINModel
 
@@ -251,6 +257,21 @@ def main():
         proto_dict = proto_builder.to_dict(prototypes)
         with open(explain_dir / "class_prototypes.json", "w") as f:
             json.dump(proto_dict, f, indent=2)
+
+        # Biological validation plots
+        logger.info("  Generating biological validation figures...")
+        plot_aa_enrichment(gnnexp_results, sample_graphs,
+                           dataset.n_classes, fig_dir)
+        plot_sasa_vs_importance(gnnexp_results, sample_graphs,
+                                dataset.n_classes, fig_dir)
+        plot_spatial_clustering(gnnexp_results, sample_graphs,
+                                dataset.n_classes, fig_dir)
+        plot_contact_distance_distribution(gnnexp_results, sample_graphs,
+                                           dataset.n_classes, fig_dir)
+        plot_sequence_separation_importance(gnnexp_results, sample_graphs,
+                                            dataset.n_classes, fig_dir)
+        plot_physicochemical_importance(gnnexp_results, sample_graphs,
+                                        dataset.n_classes, fig_dir)
 
         # Save per-sample edge importance summary
         edge_summary = []
