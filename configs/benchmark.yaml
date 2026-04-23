@@ -1,0 +1,89 @@
+# ============================================================================
+# BENCHMARK CONFIG — GIN across ALL ProteinShake tasks
+# Uses SAME GIN architecture and features as full_power.yaml
+# ============================================================================
+
+seed: 42
+
+paths:
+  data_root: "./data"
+  output_dir: "./outputs_benchmark"
+  esm_cache: "./data/esm_cache_650M"
+  log_dir: "./outputs_benchmark/logs"
+  checkpoint_dir: "./outputs_benchmark/checkpoints"
+  figures_dir: "./outputs_benchmark/figures"
+
+dataset:
+  eps_default: 8.0
+  split: "random"
+  split_similarity_threshold: 0.7
+
+# SAME features as full_power.yaml
+features:
+  use_onehot: true
+  use_physicochemical: true
+  use_sasa: true
+  use_esm2: true
+  esm2_model: "esm2_t33_650M_UR50D"
+  esm2_layer: 33
+  esm2_dim: 1280
+  use_degree: true
+  use_positional: true
+  use_edge_distance: true
+  rbf_centers: 16
+  rbf_sigma: 0.5
+  use_edge_seqsep: true
+
+# Benchmark model type
+model_type: "soft_blob_gin"
+
+# Architecture parameters
+gin:
+  hidden: 256
+  n_layers: 4
+  n_blobs: 8
+  dropout: 0.3
+  tau_start: 1.0
+  tau_end: 0.1
+
+# SAME training config as full_power.yaml
+training:
+  epochs: 200
+  batch_size: 64
+  optimizer: "adamw"
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  gradient_clip: 1.0
+  scheduler: "cosine_warmup"
+  warmup_epochs: 10
+  min_lr: 1.0e-6
+  patience: 30
+  min_delta: 1.0e-4
+  loss: "focal"
+  label_smoothing: 0.05
+  focal_gamma: 1.0
+  focal_alpha: null
+  augmentation:
+    edge_drop_rate: 0.05
+    feature_mask_rate: 0.05
+    enabled: true
+
+# Tasks to benchmark
+benchmark_tasks:
+  - EnzymeClassTask
+  - GeneOntologyTask
+  - ProteinFamilyTask
+  - StructuralClassTask
+  - LigandAffinityTask
+  - BindingSiteDetectionTask
+  - ProteinProteinInterfaceTask
+  - StructureSimilarityTask
+  - StructureSearchTask
+
+logging:
+  save_best_model: true
+  save_last_model: false
+
+task_overrides:
+  ProteinProteinInterfaceTask:
+    batch_size: 4

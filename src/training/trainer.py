@@ -218,8 +218,46 @@ class Trainer:
                     batch = self.augmentation(batch)
 
                 self.optimizer.zero_grad()
-                out = self.model(batch)
-                loss = criterion(out, batch.y.long())
+                
+                # Handle PairData vs Standard Data
+                if hasattr(batch, 'b1'):
+                    # PairBatch already contains b1 and b2 Batch objects
+                    out = self.model(batch.b1, batch.b2)
+                else:
+                    out = self.model(batch)
+                
+                # Dynamic type handling for regression/multilabel vs multiclass
+                # Use batch.y if available, otherwise pass the whole batch (for MTL/custom losses)
+                y = batch.y if batch.y is not None else batch
+                if isinstance(out, (list, tuple)):
+                    # Multi-output model (e.g. MTL)
+                    if hasattr(criterion, "forward"):
+                        # Custom criterion that handles lists (like DeepLocMTLLoss)
+                        loss = criterion(out, y)
+                    elif isinstance(y, (list, tuple)):
+                        # Standard list-to-list comparison
+                        loss = 0
+                        for o, t in zip(out, y):
+                            loss += criterion(o, t)
+                        loss = loss / len(y)
+                    else:
+                        # Fallback
+                        loss = criterion(out[0], y)
+                    correct_count = 0
+                elif not hasattr(y, "shape"):
+                    # y is likely a Batch object, pass it directly to criterion
+                    loss = criterion(out, y)
+                    correct_count = 0
+                elif len(y.shape) > 1 and y.shape[0] == out.shape[0] and y.shape[1] == out.shape[1]:
+                    loss = criterion(out, y)
+                    correct_count = 0
+                elif out.shape == y.shape:
+                    loss = criterion(out, y)
+                    correct_count = 0
+                else:
+                    loss = criterion(out, y.long())
+                    correct_count = (out.argmax(1) == y.long()).sum().item()
+                    
                 loss.backward()
 
                 if self.grad_clip > 0:
@@ -228,7 +266,7 @@ class Trainer:
                 self.optimizer.step()
 
                 total_loss += loss.item() * batch.num_graphs
-                total_correct += (out.argmax(1) == batch.y.long()).sum().item()
+                total_correct += correct_count
                 total_samples += batch.num_graphs
         else:
             for X, Y in loader:
@@ -259,10 +297,34 @@ class Trainer:
         if self.is_pyg:
             for batch in loader:
                 batch = batch.to(self.device)
-                out = self.model(batch)
-                loss = criterion(out, batch.y.long())
+                
+                if hasattr(batch, 'b1'):
+                    out = self.model(batch.b1, batch.b2)
+                else:
+                    out = self.model(batch)
+                
+                # Dynamic type handling
+                y = batch.y if batch.y is not None else batch
+                if isinstance(out, (list, tuple)):
+                    if hasattr(criterion, "forward"):
+                        loss = criterion(out, y)
+                    elif isinstance(y, (list, tuple)):
+                        loss = sum(criterion(o, t) for o, t in zip(out, y)) / len(y)
+                    else:
+                        loss = criterion(out[0], y)
+                    correct_count = 0
+                elif not hasattr(y, "shape"):
+                    loss = criterion(out, y)
+                    correct_count = 0
+                elif len(y.shape) > 1 or out.shape == y.shape:
+                    loss = criterion(out, y)
+                    correct_count = 0
+                else:
+                    loss = criterion(out, y.long())
+                    correct_count = (out.argmax(1) == y.long()).sum().item()
+                    
                 total_loss += loss.item() * batch.num_graphs
-                total_correct += (out.argmax(1) == batch.y.long()).sum().item()
+                total_correct += correct_count
                 total_samples += batch.num_graphs
         else:
             for X, Y in loader:

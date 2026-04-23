@@ -17,15 +17,33 @@ class EdgeDrop:
     def __init__(self, drop_rate: float = 0.1):
         self.drop_rate = drop_rate
 
-    def __call__(self, data: Data) -> Data:
+    def __call__(self, data) -> Data:
         if self.drop_rate <= 0:
             return data
-        E = data.edge_index.shape[1]
-        mask = torch.rand(E) > self.drop_rate
-        data.edge_index = data.edge_index[:, mask]
-        if data.edge_attr is not None:
-            data.edge_attr = data.edge_attr[mask]
+        
+        # Handle PairBatch
+        if hasattr(data, 'b1') and hasattr(data, 'b2'):
+             self.__call__(data.b1)
+             self.__call__(data.b2)
+             return data
+        
+        if hasattr(data, 'edge_index1'):
+            # PairData: apply to both
+            data.edge_index1, data.edge_attr1 = self._apply(data.edge_index1, data.edge_attr1)
+            data.edge_index2, data.edge_attr2 = self._apply(data.edge_index2, data.edge_attr2)
+        elif hasattr(data, 'edge_index'):
+            data.edge_index, data.edge_attr = self._apply(data.edge_index, data.edge_attr)
         return data
+
+    def _apply(self, edge_index, edge_attr):
+        if edge_index is None or edge_index.shape[1] == 0:
+            return edge_index, edge_attr
+        E = edge_index.shape[1]
+        mask = torch.rand(E, device=edge_index.device) > self.drop_rate
+        edge_index = edge_index[:, mask]
+        if edge_attr is not None:
+            edge_attr = edge_attr[mask]
+        return edge_index, edge_attr
 
 
 class FeatureMask:
@@ -34,12 +52,27 @@ class FeatureMask:
     def __init__(self, mask_rate: float = 0.1):
         self.mask_rate = mask_rate
 
-    def __call__(self, data: Data) -> Data:
+    def __call__(self, data) -> Data:
         if self.mask_rate <= 0:
             return data
-        mask = torch.rand_like(data.x) > self.mask_rate
-        data.x = data.x * mask.float()
+        
+        # Handle PairBatch
+        if hasattr(data, 'b1') and hasattr(data, 'b2'):
+             self.__call__(data.b1)
+             self.__call__(data.b2)
+             return data
+
+        if hasattr(data, 'x1'):
+            data.x1 = self._apply(data.x1)
+            data.x2 = self._apply(data.x2)
+        elif hasattr(data, 'x'):
+            data.x = self._apply(data.x)
         return data
+
+    def _apply(self, x):
+        if x is None: return x
+        mask = torch.rand_like(x) > self.mask_rate
+        return x * mask.float()
 
 
 class GraphAugmentation:
