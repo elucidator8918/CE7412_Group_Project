@@ -57,7 +57,8 @@ enzyme-classification/
 │   ├── extract_esm_embeddings.py   # One-time ESM-2 feature extraction
 │   ├── train.py                    # Main training pipeline (all 4 models)
 │   ├── ablation.py                 # Ablation studies (eps, blobs, features)
-│   └── ensemble.py                 # Multi-seed ensemble
+│   ├── ensemble.py                 # Multi-seed ensemble
+│   └── explain.py                  # GNNExplainer + Integrated Gradients analysis
 ├── src/
 │   ├── data/
 │   │   ├── features.py             # Feature engineering (ESM-2, physicochemical, edge)
@@ -75,6 +76,12 @@ enzyme-classification/
 │   │   └── trainer.py              # Training loop, early stopping, checkpointing
 │   ├── evaluation/
 │   │   └── metrics.py              # Accuracy, F1, AUROC, confusion matrix
+│   ├── explainability/
+│   │   ├── gnn_explainer.py        # GNNExplainer for graph classification
+│   │   ├── integrated_gradients.py # Attribution-based explanations
+│   │   ├── metrics.py              # Fidelity+, fidelity-, sparsity, stability
+│   │   ├── prototypes.py           # Per-class multi-instance prototypes
+│   │   └── visualization.py        # Explainability figures
 │   └── visualization/
 │       └── plots.py                # All report figures
 ├── requirements.txt
@@ -179,6 +186,11 @@ python scripts/ablation.py --config configs/full_power.yaml
 #    Trains 5× SoftBlobGIN with different seeds,
 #    averages softmax predictions for final result.
 python scripts/ensemble.py --config configs/full_power.yaml --n-seeds 5
+
+# 5. Explainability analysis — ~30-60 min
+#    Runs GNNExplainer and Integrated Gradients on test proteins,
+#    computes fidelity metrics, builds per-class prototypes.
+python scripts/explain.py --config configs/full_power.yaml --n-samples 50
 ```
 
 ### Quick test run (~10 min, CPU-friendly)
@@ -205,7 +217,34 @@ cat outputs_full/logs/training.log
 ```
 
 ---
+
+### Explainability analysis
+
+Requires a trained GIN checkpoint (`outputs_full/checkpoints/GIN_best.pt`).
+
+```bash
+# Full analysis: GNNExplainer + Integrated Gradients + fidelity metrics + prototypes
+python scripts/explain.py --config configs/full_power.yaml --n-samples 50
+
+# GNNExplainer only (optimization-based, ~30 min)
+python scripts/explain.py --config configs/full_power.yaml --method gnnexplainer --n-samples 50
+
+# Integrated Gradients only (gradient-based, ~10 min)
+python scripts/explain.py --config configs/full_power.yaml --method ig --n-samples 50
+
+# More samples for higher-quality prototypes
+python scripts/explain.py --config configs/full_power.yaml --n-samples 100 --epochs 300
+
+# Use a specific checkpoint
+python scripts/explain.py --config configs/full_power.yaml --checkpoint outputs_full/checkpoints/GIN_best.pt
+```
+
+Outputs are saved to `outputs_full/explainability/`.
+
 ![model_comparison](outputs_full/figures/fig_roc_curves.png)
+
+---
+
 ## Using Pretrained Models
 
 Best model checkpoints are saved in `outputs_full/checkpoints/`. To load and run inference:
@@ -276,6 +315,12 @@ After running the full pipeline, the following files are generated:
 | `fig_ablation_eps.png` | Contact radius ablation plot |
 | `fig_ablation_blobs.png` | Blob count ablation plot |
 | `fig_ablation_features.png` | Feature set ablation plot |
+| `fig_edge_importance_examples.png` | GNNExplainer edge importance on example proteins |
+| `fig_feature_group_importance.png` | Which feature groups matter per EC class |
+| `fig_fidelity_curves.png` | Fidelity+ and fidelity− vs sparsity |
+| `fig_position_importance.png` | Residue position importance heatmap |
+| `fig_class_prototypes.png` | Per-class explanation prototype summary |
+| `fig_ig_vs_gnnexplainer.png` | Method comparison (GNNExplainer vs IG) |
 
 ### Checkpoints (`outputs_full/checkpoints/`)
 | File | Description |
@@ -298,6 +343,8 @@ After running the full pipeline, the following files are generated:
 4. **Comprehensive ablation studies**: Contact radius (4/8/12 Å), blob count (3/5/8/12), and feature set ablations cleanly isolate the contribution of each component — revealing that ESM-2 embeddings account for ~85% of the total improvement.
 
 5. **Training innovations**: Focal loss with γ=1.0 for class imbalance (EC7 has only 139 training samples), cosine annealing with linear warmup, graph augmentation (edge drop + feature masking), and 5-seed ensemble averaging.
+
+6. **GNN Explainability**: Custom GNNExplainer implementation (Ying et al., NeurIPS 2019) adapted for graph classification with edge features. Learns edge masks and feature masks via mutual information maximization with marginalization trick. Complemented by Integrated Gradients for attribution-based explanations. Includes quantitative evaluation (fidelity+/−, sparsity, stability) and per-class prototype generation.
 
 ---
 
@@ -370,6 +417,8 @@ training:
 3. Lin, Z. et al. (2023). *Evolutionary-scale prediction of atomic-level protein structure with a language model.* Science.
 4. Kucera, T. et al. (2023). *ProteinShake: Building datasets and benchmarks for deep learning on protein structures.* NeurIPS.
 5. Lin, T.-Y. et al. (2017). *Focal loss for dense object detection.* ICCV.
+6. Ying, R. et al. (2019). *GNNExplainer: Generating Explanations for Graph Neural Networks.* NeurIPS.
+7. Sundararajan, M. et al. (2017). *Axiomatic Attribution for Deep Networks.* ICML.
 
 ---
 

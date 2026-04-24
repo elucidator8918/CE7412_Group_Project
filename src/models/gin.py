@@ -77,9 +77,18 @@ class GINModel(nn.Module):
             return torch.ones(data.edge_index.shape[1], 1, device=data.edge_index.device)
         return ea
 
-    def _encode(self, data):
+    def _encode(self, data, edge_weight=None, node_feat_mask=None):
         x, ei, batch = data.x.float(), data.edge_index, data.batch
         edge_attr = self._get_edge_attr(data)
+
+        # Apply node feature mask if provided (for explainability)
+        if node_feat_mask is not None:
+            x = x * node_feat_mask
+
+        # Apply edge weight mask if provided (for explainability)
+        # Scales edge_attr so that masked edges contribute less to message passing
+        if edge_weight is not None:
+            edge_attr = edge_attr * edge_weight.unsqueeze(-1)
 
         x = self.input_proj(x)
 
@@ -97,8 +106,9 @@ class GINModel(nn.Module):
 
         return x, batch
 
-    def forward(self, data):
-        x, batch = self._encode(data)
+    def forward(self, data, edge_weight=None, node_feat_mask=None):
+        x, batch = self._encode(data, edge_weight=edge_weight,
+                                node_feat_mask=node_feat_mask)
 
         # Dual pooling
         z_mean = global_mean_pool(x, batch)
