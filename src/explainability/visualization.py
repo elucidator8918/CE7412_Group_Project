@@ -477,16 +477,20 @@ def plot_spatial_clustering(explanations: list, graphs: list, n_classes: int,
                            out_dir: str, top_frac: float = 0.2):
     """Spatial clustering of important residues in 3D.
 
-    Computes mean pairwise Cα distance among top-K important residues vs
-    random subsets. If explanations are biologically meaningful, important
-    residues should be spatially co-localized (near active site).
+    For each protein, computes mean pairwise Cα distance among the top-20%
+    important residues and among 100 random subsets of the same size.
+    Reports the z-score: how many standard deviations the important-residue
+    distance is below the random mean. Negative z = more clustered than random.
     """
     from collections import defaultdict
 
-    real_dists = defaultdict(list)    # mean pairwise dist of top-K
-    random_dists = defaultdict(list)  # mean pairwise dist of random-K
+    # Per-protein: (important_dist, random_mean, random_std)
+    per_class_z = defaultdict(list)
+    per_class_imp_dist = defaultdict(list)
+    per_class_rand_dist = defaultdict(list)
 
     rng = np.random.default_rng(42)
+    n_random = 100
 
     for exp, graph in zip(explanations, graphs):
         if exp.node_importance is None or not hasattr(graph, 'coords'):
@@ -500,56 +504,78 @@ def plot_spatial_clustering(explanations: list, graphs: list, n_classes: int,
         k = max(3, int(top_frac * n))
         top_idx = np.argsort(exp.node_importance[:n])[-k:]
 
-        # Mean pairwise distance of top-K
+        # Mean pairwise distance of top-K important residues
         top_coords = coords[top_idx]
         dists = np.linalg.norm(top_coords[:, None] - top_coords[None, :], axis=-1)
-        real_dists[c].append(dists[np.triu_indices(k, k=1)].mean())
+        imp_dist = dists[np.triu_indices(k, k=1)].mean()
 
-        # Random baseline (10 samples)
-        for _ in range(10):
+        # Random baseline: sample 100 random subsets of size k
+        rand_dists = []
+        for _ in range(n_random):
             rand_idx = rng.choice(n, size=k, replace=False)
             rand_coords = coords[rand_idx]
             rdists = np.linalg.norm(rand_coords[:, None] - rand_coords[None, :], axis=-1)
-            random_dists[c].append(rdists[np.triu_indices(k, k=1)].mean())
+            rand_dists.append(rdists[np.triu_indices(k, k=1)].mean())
+
+        rand_mean = np.mean(rand_dists)
+        rand_std = np.std(rand_dists)
+        z = (imp_dist - rand_mean) / (rand_std + 1e-8)
+
+        per_class_z[c].append(z)
+        per_class_imp_dist[c].append(imp_dist)
+        per_class_rand_dist[c].append(rand_mean)
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
 
-    # Panel 1: Per-class comparison
+    # Panel 1: Per-class mean distances (important vs random mean)
     ax = axes[0]
-    classes = []
-    real_means = []
-    rand_means = []
+    classes, imp_means, rand_means = [], [], []
     for c in range(n_classes):
-        if real_dists[c]:
+        if per_class_imp_dist[c]:
             classes.append(f"EC{c+1}")
-            real_means.append(np.mean(real_dists[c]))
-            rand_means.append(np.mean(random_dists[c]))
+            imp_means.append(np.mean(per_class_imp_dist[c]))
+            rand_means.append(np.mean(per_class_rand_dist[c]))
 
     if classes:
         x = np.arange(len(classes))
         width = 0.35
-        ax.bar(x - width/2, real_means, width, label="Important residues",
+        ax.bar(x - width/2, imp_means, width, label="Important residues (top 20%)",
                color="#C44E52", alpha=0.8)
-        ax.bar(x + width/2, rand_means, width, label="Random residues",
+        ax.bar(x + width/2, rand_means, width,
+               label="Random subsets (mean of 100 samples)",
                color="#4C72B0", alpha=0.8)
         ax.set_xticks(x)
         ax.set_xticklabels(classes)
         ax.set_ylabel("Mean pairwise Cα distance (Å)")
-        ax.set_title("Spatial Clustering of Important Residues", fontweight="bold")
-        ax.legend()
+        ax.set_title("Important vs Random Residue Distances", fontweight="bold")
+        ax.legend(fontsize=8)
         ax.grid(axis="y", alpha=0.3)
 
-    # Panel 2: Ratio (lower = more clustered)
+    # Panel 2: Z-score distribution (negative = more clustered than random)
     ax = axes[1]
-    if classes:
-        ratios = [r / (d + 1e-8) for r, d in zip(real_means, rand_means)]
-        colors = ["#55A868" if r < 1.0 else "#C44E52" for r in ratios]
-        ax.bar(classes, ratios, color=colors, alpha=0.8)
-        ax.axhline(1.0, color="black", lw=1, ls="--", label="Random baseline")
-        ax.set_ylabel("Distance ratio (important / random)")
-        ax.set_title("Clustering Ratio (< 1.0 = more clustered)", fontweight="bold")
-        ax.legend()
+    all_z = []
+    class_labels = []
+    for c in range(n_classes):
+        for z in per_class_z.get(c, []):
+            all_z.append(z)
+            class_labels.append(f"EC{c+1}")
+
+    if all_z:
+        import pandas as pd
+        df = pd.DataFrame({"EC": class_labels, "z-score": all_z})
+        sns.boxplot(data=df, x="EC", y="z-score", ax=ax,
+                    palette=PALETTE[:n_classes], fliersize=3)
+        ax.axhline(0, color="black", lw=1, ls="--", alpha=0.7)
+        ax.set_ylabel("z-score (negative = more clustered)")
+        ax.set_title("Spatial Clustering z-score per Protein", fontweight="bold")
         ax.grid(axis="y", alpha=0.3)
+
+        # Annotate mean z per class
+        for i, c_name in enumerate(sorted(df["EC"].unique())):
+            mean_z = df[df["EC"] == c_name]["z-score"].mean()
+            ax.text(i, ax.get_ylim()[1] * 0.95, f"μ={mean_z:.2f}",
+                    ha="center", fontsize=8, fontweight="bold",
+                    color="#55A868" if mean_z < 0 else "#C44E52")
 
     plt.tight_layout()
     save_fig(fig, out_dir, "fig_spatial_clustering.png")

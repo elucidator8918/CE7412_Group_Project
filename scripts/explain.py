@@ -34,6 +34,7 @@ from src.explainability.gnn_explainer import GNNExplainerGraph
 from src.explainability.integrated_gradients import IntegratedGradientsExplainer
 from src.explainability.metrics import (
     compute_fidelity_metrics,
+    compute_pyg_metrics,
     compute_sparsity,
     compute_stability,
 )
@@ -236,6 +237,25 @@ def main():
         logger.info(f"  Stability (intra-class feature mask cosine sim):")
         for c, s in stability.items():
             logger.info(f"    EC{c+1}: {s:.3f}")
+
+        # PyG-aligned metrics
+        logger.info("\n  Computing PyG-aligned explanation metrics...")
+        pyg_metrics = compute_pyg_metrics(
+            model, sample_graphs, edge_masks, device
+        )
+        logger.info(f"  Unfaithfulness: {pyg_metrics['unfaithfulness']:.4f}")
+        logger.info(f"  Characterization score: {pyg_metrics['characterization_score']:.4f}")
+
+        # Save all metrics
+        metrics_summary = {
+            "mean_sparsity": mean_sparsity,
+            "mean_masked_confidence": mean_confidence,
+            **{f"stability_EC{c+1}": s for c, s in stability.items()},
+            **pyg_metrics,
+        }
+        pd.DataFrame([metrics_summary]).to_csv(
+            explain_dir / "explanation_metrics_summary.csv", index=False
+        )
 
         # Visualizations
         logger.info("\n  Generating GNNExplainer figures...")
