@@ -12,10 +12,10 @@
 
 ## Authors
 
-- Dutta Siddhant Shivshankar
+- Siddhant Dutta
 - Soumick Sarkar
 - Edward Tan Beng Wai
-- Rangodage Mendis Gunawardana Kavindu Pasan Kumara
+- Pasan Gunawardane
 
 Nanyang Technological University, Singapore
 
