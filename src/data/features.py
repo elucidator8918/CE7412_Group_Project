@@ -95,6 +95,7 @@ class ESM2Extractor:
         self._model = None
         self._alphabet = None
         self._batch_converter = None
+        self._ram_cache = {}
 
     def _load_model(self):
         """Lazy-load ESM-2 model on first use."""
@@ -118,12 +119,17 @@ class ESM2Extractor:
 
         Caches result to disk. Returns tensor on CPU.
         """
+        if protein_id in self._ram_cache:
+            return self._ram_cache[protein_id]
+
         cache_file = self._cache_path(protein_id)
         if cache_file.exists():
-            return torch.load(cache_file, map_location="cpu", weights_only=True)
+            emb = torch.load(cache_file, map_location="cpu", weights_only=True)
+            self._ram_cache[protein_id] = emb
+            return emb
 
         self._load_model()
-
+        
         # Truncate very long sequences (ESM-2 limit ~1024 for small model)
         max_len = 1022
         seq = sequence[:max_len]
@@ -138,7 +144,29 @@ class ESM2Extractor:
         embeddings = result["representations"][self.layer][0, 1:len(seq)+1].cpu()
 
         torch.save(embeddings, cache_file)
+        self._ram_cache[protein_id] = embeddings
         return embeddings
+
+    def unload_model(self):
+        """Free GPU memory by deleting the model."""
+        if self._model is not None:
+            del self._model
+            self._model = None
+            torch.cuda.empty_cache()
+            logger.info("ESM-2 model unloaded from memory.")
+
+    def clear_ram_cache(self):
+        """Clear the in-memory cache of embeddings."""
+        self._ram_cache = {}
+        logger.debug("ESM-2 RAM cache cleared.")
+
+    def clear_disk_cache(self):
+        """Delete all cached .pt files from disk."""
+        if self.cache_dir.exists():
+            import shutil
+            shutil.rmtree(self.cache_dir)
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"ESM-2 disk cache cleared: {self.cache_dir}")
 
     def extract_batch(self, proteins: list, batch_size: int = 8) -> dict:
         """Extract embeddings for a batch of (id, sequence) tuples."""
@@ -220,15 +248,20 @@ def compute_node_features(
         else:
             parts.append(torch.zeros(n, 1))
 
-    # 4) ESM-2 embeddings (320 dim)
-    if (cfg is None or cfg.get("use_esm2", True)) and esm_embeddings is not None:
-        # Pad/truncate to match residue count if needed
-        if esm_embeddings.shape[0] < n:
-            pad = torch.zeros(n - esm_embeddings.shape[0], esm_embeddings.shape[1])
-            esm_embeddings = torch.cat([esm_embeddings, pad], dim=0)
-        elif esm_embeddings.shape[0] > n:
-            esm_embeddings = esm_embeddings[:n]
-        parts.append(esm_embeddings.float())
+    # 4) ESM-2 embeddings (320 or 1280 dim)
+    if cfg is None or cfg.get("use_esm2", True):
+        esm_dim = cfg.get("esm2_dim", 320) if cfg else 320
+        if esm_embeddings is not None:
+            # Pad/truncate to match residue count if needed
+            if esm_embeddings.shape[0] < n:
+                pad = torch.zeros(n - esm_embeddings.shape[0], esm_embeddings.shape[1])
+                esm_embeddings = torch.cat([esm_embeddings, pad], dim=0)
+            elif esm_embeddings.shape[0] > n:
+                esm_embeddings = esm_embeddings[:n]
+            parts.append(esm_embeddings.float())
+        else:
+            # ESM expected but missing - pad with zeros to maintain dimension consistency
+            parts.append(torch.zeros(n, esm_dim))
 
     # 5) Node degree (1 dim)
     if cfg is None or cfg.get("use_degree", True):
