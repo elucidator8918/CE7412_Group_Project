@@ -196,9 +196,14 @@ class SoftBlobGIN(nn.Module):
             return torch.ones(data.edge_index.shape[1], 1, device=data.edge_index.device)
         return ea
 
-    def _encode(self, data):
+    def _encode(self, data, edge_weight=None, node_feat_mask=None):
         x, ei, batch = data.x.float(), data.edge_index, data.batch
         edge_attr = self._get_edge_attr(data)
+
+        if node_feat_mask is not None:
+            x = x * node_feat_mask
+        if edge_weight is not None:
+            edge_attr = edge_attr * edge_weight.unsqueeze(-1)
 
         x = self.input_proj(x)
         for conv, bn in zip(self.convs, self.bns):
@@ -209,8 +214,10 @@ class SoftBlobGIN(nn.Module):
 
         return x, batch
 
-    def forward(self, data, return_blobs=False):
-        x, batch = self._encode(data)
+    def forward(self, data, edge_weight=None, node_feat_mask=None,
+                return_blobs=False):
+        x, batch = self._encode(data, edge_weight=edge_weight,
+                                node_feat_mask=node_feat_mask)
 
         # Soft blob assignment
         logits = self.blob_head(x)

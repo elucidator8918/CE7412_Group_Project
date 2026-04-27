@@ -41,11 +41,18 @@ from src.explainability.metrics import (
 from src.explainability.prototypes import ClassPrototypes
 from src.explainability.visualization import (
     plot_aa_enrichment,
+    plot_blob_aa_enrichment,
+    plot_blob_assignments,
+    plot_blob_importance,
+    plot_blob_sasa_profiles,
+    plot_blob_spatial_coherence,
+    plot_blob_summary,
     plot_class_prototypes,
     plot_contact_distance_distribution,
     plot_edge_importance_examples,
     plot_fidelity_curves,
     plot_feature_group_importance,
+    plot_gin_blob_overlap,
     plot_method_comparison,
     plot_physicochemical_importance,
     plot_position_importance,
@@ -53,7 +60,15 @@ from src.explainability.visualization import (
     plot_sequence_separation_importance,
     plot_spatial_clustering,
 )
-from src.models.gin import GINModel
+from src.models.gin import GINModel, SoftBlobGIN
+from src.explainability.blob_analysis import (
+    extract_blob_batch,
+    compute_blob_importance,
+    aggregate_blob_stats,
+    compute_blob_aa_enrichment,
+    compute_blob_sasa_profiles,
+    compute_gin_blob_overlap,
+)
 
 
 def setup_logging(log_dir):
@@ -396,7 +411,118 @@ def main():
             )
 
     # ══════════════════════════════════════════════════════════════════════
-    # 5. SUMMARY
+    # 5. SOFTBLOBGIN INTERPRETABILITY
+    # ══════════════════════════════════════════════════════════════════════
+    blob_ckpt = Path(cfg["paths"]["checkpoint_dir"]) / "SoftBlobGIN_best.pt"
+    if blob_ckpt.exists() and "soft_blob_gin" in cfg["models"]:
+        logger.info("\n" + "=" * 50)
+        logger.info("SoftBlobGIN — Built-in blob interpretability")
+        logger.info("=" * 50)
+
+        sb_cfg = cfg["models"]["soft_blob_gin"]
+        blob_model = SoftBlobGIN(
+            in_ch=dataset.feat_dim, hidden=sb_cfg["hidden"],
+            n_classes=dataset.n_classes, edge_dim=dataset.edge_dim,
+            n_blobs=sb_cfg["n_blobs"], n_layers=sb_cfg["n_layers"],
+            dropout=sb_cfg["dropout"],
+            tau_start=sb_cfg["tau_start"], tau_end=sb_cfg["tau_end"],
+        ).to(device)
+        blob_state = torch.load(str(blob_ckpt), map_location=device, weights_only=True)
+        blob_model.load_state_dict(blob_state)
+        blob_model.eval()
+        # Set tau to final (inference) value
+        blob_model._current_tau = sb_cfg["tau_end"]
+        logger.info(f"  Loaded SoftBlobGIN checkpoint: {blob_ckpt}")
+        logger.info(f"  n_blobs={sb_cfg['n_blobs']}, tau={blob_model._current_tau}")
+
+        # Extract blob assignments
+        logger.info("  Extracting blob assignments...")
+        blob_results = extract_blob_batch(blob_model, sample_graphs, device,
+                                          verbose=True)
+
+        # Compute blob importance (which blobs matter most per protein)
+        logger.info("  Computing blob importance...")
+        blob_importances = []
+        for i, data in enumerate(sample_graphs):
+            imp = compute_blob_importance(blob_model, data, device,
+                                          n_blobs=sb_cfg["n_blobs"])
+            blob_importances.append(imp)
+            if (i + 1) % 20 == 0:
+                logger.info(f"    Blob importance {i+1}/{len(sample_graphs)}")
+
+        # Aggregate stats per class
+        blob_stats = aggregate_blob_stats(blob_results, sample_labels,
+                                          dataset.n_classes)
+
+        # Log summary
+        for c in range(dataset.n_classes):
+            if blob_stats.get(c) and blob_stats[c] is not None:
+                s = blob_stats[c]
+                sizes_str = ", ".join(f"{v:.0f}" for v in s["mean_blob_sizes"])
+                logger.info(f"  EC{c+1}: mean blob sizes = [{sizes_str}]")
+
+        # Generate blob figures
+        logger.info("  Generating SoftBlobGIN figures...")
+        n_blobs = sb_cfg["n_blobs"]
+        plot_blob_assignments(blob_results, dataset.n_classes, fig_dir)
+        plot_blob_spatial_coherence(blob_results, dataset.n_classes, fig_dir)
+        plot_blob_importance(blob_importances, sample_labels,
+                             dataset.n_classes, n_blobs, fig_dir)
+        plot_blob_summary(blob_results, blob_importances, sample_labels,
+                          dataset.n_classes, n_blobs, fig_dir)
+
+        # Blob-level biological validation
+        logger.info("  Blob-level biological validation...")
+
+        # Blob AA enrichment: which amino acids does each blob capture?
+        blob_aa_enrich = compute_blob_aa_enrichment(
+            blob_results, sample_labels, dataset.n_classes
+        )
+        plot_blob_aa_enrichment(blob_aa_enrich, dataset.n_classes, n_blobs, fig_dir)
+
+        # Blob SASA profiles: which blobs are buried vs exposed?
+        blob_sasa = compute_blob_sasa_profiles(
+            blob_results, sample_labels, dataset.n_classes
+        )
+        plot_blob_sasa_profiles(blob_sasa, dataset.n_classes, n_blobs, fig_dir)
+
+        # Log blob SASA summary
+        for c in range(dataset.n_classes):
+            if blob_sasa.get(c) is not None:
+                sasa_str = ", ".join(f"{v:.3f}" for v in blob_sasa[c])
+                logger.info(f"  EC{c+1} blob SASA: [{sasa_str}]")
+
+        # Cross-model comparison: GIN GNNExplainer vs SoftBlobGIN blobs
+        if gnnexp_results is not None:
+            logger.info("  Cross-model comparison: GIN vs SoftBlobGIN...")
+            overlaps = compute_gin_blob_overlap(gnnexp_results, blob_results)
+            plot_gin_blob_overlap(overlaps, sample_labels,
+                                  dataset.n_classes, fig_dir)
+
+            mean_jaccard = np.nanmean([j for j, _ in overlaps])
+            logger.info(f"  Mean Jaccard overlap (GIN important vs SoftBlobGIN top blob): {mean_jaccard:.3f}")
+
+        # Save blob data
+        blob_summary_rows = []
+        for br, imp in zip(blob_results, blob_importances):
+            blob_summary_rows.append({
+                "protein_idx": br.protein_idx,
+                "true_label": br.true_label,
+                "predicted_label": br.predicted_label,
+                "predicted_prob": br.predicted_prob,
+                "n_nodes": br.n_nodes,
+                "blob_sizes": br.blob_sizes.tolist(),
+                "blob_importance": imp.tolist(),
+            })
+        with open(explain_dir / "softblobgin_blob_analysis.json", "w") as f:
+            json.dump(blob_summary_rows, f, indent=2)
+
+        logger.info(f"  SoftBlobGIN analysis complete.")
+    else:
+        logger.info("\n  SoftBlobGIN checkpoint not found, skipping blob analysis.")
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 6. SUMMARY
     # ══════════════════════════════════════════════════════════════════════
     logger.info("\n" + "=" * 60)
     logger.info("EXPLAINABILITY ANALYSIS COMPLETE")

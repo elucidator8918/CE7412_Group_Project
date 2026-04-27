@@ -304,8 +304,290 @@ def plot_method_comparison(gnnexp_results: list, ig_results: list,
 
 
 # ============================================================================
-# Class prototype comparison
+# SoftBlobGIN interpretability plots
 # ============================================================================
+
+def plot_blob_assignments(blob_results: list, n_classes: int, out_dir: str):
+    """Visualize blob assignments along the protein sequence for example proteins."""
+    from collections import defaultdict
+
+    by_class = defaultdict(list)
+    for br in blob_results:
+        by_class[br.true_label].append(br)
+
+    n_rows = min(n_classes, 7)
+    fig, axes = plt.subplots(n_rows, 1, figsize=(14, 2.5 * n_rows))
+    if n_rows == 1:
+        axes = [axes]
+
+    blob_cmap = plt.cm.Set2
+
+    for row in range(n_rows):
+        ax = axes[row]
+        examples = by_class.get(row, [])
+        if not examples:
+            ax.set_visible(False)
+            continue
+
+        br = examples[0]
+        n = br.n_nodes
+        K = br.n_blobs
+
+        positions = np.arange(n)
+        bottom = np.zeros(n)
+        for k in range(K):
+            ax.bar(positions, br.assignments[:, k], bottom=bottom,
+                   color=blob_cmap(k / K), width=1.0, linewidth=0)
+            bottom += br.assignments[:, k]
+
+        ax.set_xlim(0, n)
+        ax.set_ylim(0, 1)
+        ax.set_ylabel(f"EC{row+1}", fontweight="bold", fontsize=9)
+        if row == n_rows - 1:
+            ax.set_xlabel("Residue position")
+        else:
+            ax.set_xticklabels([])
+
+    K = blob_results[0].n_blobs
+    patches = [plt.Rectangle((0, 0), 1, 1, fc=blob_cmap(k / K))
+               for k in range(K)]
+    fig.legend(patches, [f"Blob {k+1}" for k in range(K)],
+              loc="upper right", fontsize=8, ncol=K)
+    fig.suptitle("SoftBlobGIN \u2014 Blob Assignments Along Sequence",
+                 fontweight="bold", fontsize=13)
+    plt.tight_layout()
+    save_fig(fig, out_dir, "fig_blob_assignments.png")
+
+
+def plot_blob_spatial_coherence(blob_results: list, n_classes: int, out_dir: str):
+    """Blob spatial radius per EC class."""
+    from collections import defaultdict
+
+    class_radii = defaultdict(list)
+    for br in blob_results:
+        if br.blob_spatial_radius is not None:
+            non_empty = br.blob_sizes > 1
+            if non_empty.any():
+                class_radii[br.true_label].append(
+                    br.blob_spatial_radius[non_empty].mean()
+                )
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    classes, means, stds = [], [], []
+    for c in range(n_classes):
+        if class_radii[c]:
+            classes.append(f"EC{c+1}")
+            means.append(np.mean(class_radii[c]))
+            stds.append(np.std(class_radii[c]))
+
+    if classes:
+        x = np.arange(len(classes))
+        ax.bar(x, means, yerr=stds, color=[PALETTE[i] for i in range(len(classes))],
+               alpha=0.8, capsize=4)
+        ax.set_xticks(x)
+        ax.set_xticklabels(classes)
+        ax.set_ylabel("Mean intra-blob C\u03b1 distance (\u00c5)")
+        ax.set_title("Blob Spatial Coherence by EC Class", fontweight="bold")
+        ax.grid(axis="y", alpha=0.3)
+
+    plt.tight_layout()
+    save_fig(fig, out_dir, "fig_blob_spatial_coherence.png")
+
+
+def plot_blob_importance(blob_importances: list, labels: np.ndarray,
+                         n_classes: int, n_blobs: int, out_dir: str):
+    """Heatmap of blob importance per EC class."""
+    from collections import defaultdict
+
+    class_imp = defaultdict(list)
+    for imp, label in zip(blob_importances, labels):
+        class_imp[int(label)].append(imp)
+
+    mat = np.zeros((n_classes, n_blobs))
+    for c in range(n_classes):
+        if class_imp[c]:
+            mat[c] = np.mean(class_imp[c], axis=0)
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    im = ax.imshow(mat, aspect="auto", cmap="YlOrRd")
+    ax.set_xticks(range(n_blobs))
+    ax.set_xticklabels([f"Blob {k+1}" for k in range(n_blobs)])
+    ax.set_yticks(range(n_classes))
+    ax.set_yticklabels([f"EC{c+1} {EC_NAMES[c]}" for c in range(n_classes)],
+                       fontsize=9)
+    plt.colorbar(im, ax=ax, label="Importance (\u0394 confidence on masking)")
+
+    for i in range(n_classes):
+        for j in range(n_blobs):
+            ax.text(j, i, f"{mat[i,j]:.3f}", ha="center", va="center",
+                    fontsize=7, color="white" if mat[i,j] > mat.max()*0.5 else "black")
+
+    ax.set_title("Blob Importance by EC Class (SoftBlobGIN)", fontweight="bold")
+    plt.tight_layout()
+    save_fig(fig, out_dir, "fig_blob_importance.png")
+
+
+def plot_blob_summary(blob_results: list, blob_importances: list,
+                      labels: np.ndarray, n_classes: int, n_blobs: int,
+                      out_dir: str):
+    """Combined summary: blob sizes, sequence span, and importance."""
+    from collections import defaultdict
+
+    class_data = defaultdict(list)
+    for br, imp, label in zip(blob_results, blob_importances, labels):
+        class_data[int(label)].append((br, imp))
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+
+    ax = axes[0]
+    for c in range(n_classes):
+        if class_data[c]:
+            sizes = np.mean([br.blob_sizes for br, _ in class_data[c]], axis=0)
+            ax.plot(range(n_blobs), sizes, "o-", color=PALETTE[c],
+                    label=f"EC{c+1}", markersize=5)
+    ax.set_xlabel("Blob index")
+    ax.set_ylabel("Mean blob size (residues)")
+    ax.set_title("Blob Sizes", fontweight="bold")
+    ax.legend(fontsize=7, ncol=2)
+    ax.grid(alpha=0.3)
+
+    ax = axes[1]
+    for c in range(n_classes):
+        if class_data[c]:
+            spans = np.mean([br.blob_seq_span for br, _ in class_data[c]], axis=0)
+            ax.plot(range(n_blobs), spans, "o-", color=PALETTE[c],
+                    label=f"EC{c+1}", markersize=5)
+    ax.set_xlabel("Blob index")
+    ax.set_ylabel("Mean sequence span")
+    ax.set_title("Blob Sequence Span", fontweight="bold")
+    ax.legend(fontsize=7, ncol=2)
+    ax.grid(alpha=0.3)
+
+    ax = axes[2]
+    for c in range(n_classes):
+        if class_data[c]:
+            imps = np.mean([imp for _, imp in class_data[c]], axis=0)
+            ax.plot(range(n_blobs), imps, "o-", color=PALETTE[c],
+                    label=f"EC{c+1}", markersize=5)
+    ax.set_xlabel("Blob index")
+    ax.set_ylabel("Mean importance (\u0394 confidence)")
+    ax.set_title("Blob Importance", fontweight="bold")
+    ax.legend(fontsize=7, ncol=2)
+    ax.grid(alpha=0.3)
+
+    fig.suptitle("SoftBlobGIN \u2014 Blob Analysis Summary", fontweight="bold", fontsize=13)
+    plt.tight_layout()
+    save_fig(fig, out_dir, "fig_blob_summary.png")
+
+
+def plot_blob_aa_enrichment(blob_aa_enrichment: dict, n_classes: int,
+                            n_blobs: int, out_dir: str):
+    """Per-blob AA enrichment heatmap for each EC class."""
+    AA_LETTERS = list("ACDEFGHIKLMNPQRSTVWY")
+    CATALYTIC_SET = set("HCSDEKRY")
+
+    # Pick top-3 most important blobs (exclude dominant blob 7)
+    # Show one combined heatmap: rows = blobs, cols = AA, averaged across classes
+    all_enrich = []
+    for c in range(n_classes):
+        if blob_aa_enrichment.get(c) is not None:
+            all_enrich.append(blob_aa_enrichment[c])
+    if not all_enrich:
+        return
+
+    mean_enrich = np.mean(all_enrich, axis=0)  # [K, 20]
+
+    fig, ax = plt.subplots(figsize=(14, 5))
+    im = ax.imshow(mean_enrich, aspect="auto", cmap="RdBu_r", vmin=-1.5, vmax=1.5)
+    ax.set_xticks(range(20))
+    ax.set_xticklabels(AA_LETTERS, fontsize=9, fontweight="bold")
+    ax.set_yticks(range(n_blobs))
+    ax.set_yticklabels([f"Blob {k+1}" for k in range(n_blobs)])
+    plt.colorbar(im, ax=ax, label="log\u2082(enrichment vs background)")
+
+    for j, aa in enumerate(AA_LETTERS):
+        if aa in CATALYTIC_SET:
+            ax.text(j, -0.7, "\u2605", ha="center", va="center", fontsize=8,
+                    color="#C44E52")
+
+    ax.set_title("Per-Blob AA Enrichment (\u2605 = catalytic residues)",
+                 fontweight="bold")
+    ax.set_xlabel("Amino acid")
+    plt.tight_layout()
+    save_fig(fig, out_dir, "fig_blob_aa_enrichment.png")
+
+
+def plot_blob_sasa_profiles(blob_sasa: dict, n_classes: int, n_blobs: int,
+                            out_dir: str):
+    """Per-blob SASA profiles — which blobs are buried vs exposed."""
+    fig, ax = plt.subplots(figsize=(10, 5))
+
+    for c in range(n_classes):
+        if blob_sasa.get(c) is not None:
+            ax.plot(range(n_blobs), blob_sasa[c], "o-", color=PALETTE[c],
+                    label=f"EC{c+1}", markersize=6, lw=2)
+
+    ax.set_xlabel("Blob index")
+    ax.set_ylabel("Mean normalized SASA")
+    ax.set_title("Blob Solvent Accessibility Profiles\n"
+                 "(lower = more buried / active-site-like)",
+                 fontweight="bold")
+    ax.legend(fontsize=8, ncol=2)
+    ax.grid(alpha=0.3)
+    plt.tight_layout()
+    save_fig(fig, out_dir, "fig_blob_sasa_profiles.png")
+
+
+def plot_gin_blob_overlap(overlaps: list, labels: np.ndarray,
+                          n_classes: int, out_dir: str):
+    """Cross-model comparison: GIN GNNExplainer vs SoftBlobGIN blobs."""
+    from collections import defaultdict
+
+    class_jaccards = defaultdict(list)
+    for (jaccard, _), label in zip(overlaps, labels):
+        if not np.isnan(jaccard):
+            class_jaccards[int(label)].append(jaccard)
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    # Panel 1: Per-class Jaccard
+    ax = axes[0]
+    classes, means, stds = [], [], []
+    for c in range(n_classes):
+        if class_jaccards[c]:
+            classes.append(f"EC{c+1}")
+            means.append(np.mean(class_jaccards[c]))
+            stds.append(np.std(class_jaccards[c]))
+
+    if classes:
+        x = np.arange(len(classes))
+        ax.bar(x, means, yerr=stds, color=[PALETTE[i] for i in range(len(classes))],
+               alpha=0.8, capsize=4)
+        ax.set_xticks(x)
+        ax.set_xticklabels(classes)
+        ax.set_ylabel("Jaccard overlap")
+        ax.set_title("GIN Important Residues vs\nSoftBlobGIN Top Blob",
+                     fontweight="bold")
+        ax.grid(axis="y", alpha=0.3)
+
+    # Panel 2: Histogram of all Jaccards
+    ax = axes[1]
+    all_j = [j for jacs in class_jaccards.values() for j in jacs]
+    if all_j:
+        ax.hist(all_j, bins=20, color="#4C72B0", alpha=0.8, edgecolor="white")
+        ax.axvline(np.mean(all_j), color="#C44E52", lw=2, ls="--",
+                   label=f"Mean={np.mean(all_j):.3f}")
+        ax.set_xlabel("Jaccard overlap")
+        ax.set_ylabel("Count")
+        ax.set_title("Cross-model Agreement Distribution", fontweight="bold")
+        ax.legend()
+        ax.grid(alpha=0.3)
+
+    fig.suptitle("GIN (GNNExplainer) vs SoftBlobGIN (Blob Assignments)",
+                 fontweight="bold", fontsize=13)
+    plt.tight_layout()
+    save_fig(fig, out_dir, "fig_gin_blob_overlap.png")
+
 
 # ============================================================================
 # Biological validation plots
@@ -563,8 +845,8 @@ def plot_spatial_clustering(explanations: list, graphs: list, n_classes: int,
     if all_z:
         import pandas as pd
         df = pd.DataFrame({"EC": class_labels, "z-score": all_z})
-        sns.boxplot(data=df, x="EC", y="z-score", ax=ax,
-                    palette=PALETTE[:n_classes], fliersize=3)
+        sns.boxplot(data=df, x="EC", y="z-score", hue="EC", ax=ax,
+                    palette=PALETTE[:n_classes], fliersize=3, legend=False)
         ax.axhline(0, color="black", lw=1, ls="--", alpha=0.7)
         ax.set_ylabel("z-score (negative = more clustered)")
         ax.set_title("Spatial Clustering z-score per Protein", fontweight="bold")

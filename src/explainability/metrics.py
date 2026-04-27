@@ -238,17 +238,18 @@ def compute_characterization_score(model, graphs: list, edge_masks: list,
                                     threshold: float = 0.5) -> float:
     """Characterization score (aligned with PyG's characterization_score).
 
-    Treats the edge mask as a binary classifier: edges with mask > threshold
-    are "positive" (important). Measures how well this binary classification
-    predicts whether removing the edge changes the model's prediction.
+    Measures how well the edge mask predicts the actual impact of removing
+    each edge. Uses probability drop (continuous) instead of binary prediction
+    change, since robust models rarely flip predictions on single-edge removal.
 
-    Returns AUROC of edge_mask as predictor of prediction-changing edges.
+    Returns Spearman correlation between edge mask values and actual
+    probability drop when each edge is removed. Higher = better.
     """
-    from sklearn.metrics import roc_auc_score
+    from scipy.stats import spearmanr
 
     model.eval()
     all_mask_vals = []
-    all_labels = []  # 1 if removing edge changes prediction, 0 otherwise
+    all_prob_drops = []
 
     for data, emask in zip(graphs, edge_masks):
         data = data.clone().to(device)
@@ -257,31 +258,36 @@ def compute_characterization_score(model, graphs: list, edge_masks: list,
                                      device=device)
 
         n_edges = data.edge_index.shape[1]
-        if n_edges == 0 or n_edges > 2000:  # skip very large graphs for speed
+        if n_edges == 0 or n_edges > 2000:
             continue
 
         with torch.no_grad():
-            orig_pred = model(data).argmax(dim=1).item()
+            orig_logits = model(data)
+            orig_pred = orig_logits.argmax(dim=1).item()
+            orig_prob = F.softmax(orig_logits, dim=1)[0, orig_pred].item()
 
-        # Sample edges to test (not all — too expensive)
+        # Sample edges to test
         n_sample = min(50, n_edges)
         rng = np.random.default_rng(42)
         sample_idx = rng.choice(n_edges, size=n_sample, replace=False)
 
         for idx in sample_idx:
-            # Remove single edge
             weight = torch.ones(n_edges, device=device)
             weight[idx] = 0.0
             with torch.no_grad():
-                new_pred = model(data, edge_weight=weight).argmax(dim=1).item()
+                new_logits = model(data, edge_weight=weight)
+                new_prob = F.softmax(new_logits, dim=1)[0, orig_pred].item()
 
             all_mask_vals.append(emask[idx])
-            all_labels.append(1 if new_pred != orig_pred else 0)
+            all_prob_drops.append(orig_prob - new_prob)  # positive = edge was important
 
-    if not all_labels or sum(all_labels) == 0 or sum(all_labels) == len(all_labels):
+    if len(all_mask_vals) < 3:
         return float('nan')
 
-    return roc_auc_score(all_labels, all_mask_vals)
+    corr, _ = spearmanr(all_mask_vals, all_prob_drops)
+    if np.isnan(corr):
+        return float('nan')
+    return corr
 
 
 def compute_pyg_metrics(model, graphs: list, edge_masks: list,
