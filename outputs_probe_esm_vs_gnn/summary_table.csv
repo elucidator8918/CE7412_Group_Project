@@ -1,0 +1,4 @@
+Method,auroc,pred_auroc,top_k_precision,pred_top_k_precision,spatial_coherence,spatial_corr,sequence_bias,attn_entropy
+ESM-2 Attention,0.686±0.084,—,0.611±0.189,—,15.815±1.939,0.307±0.112,0.009±0.009,4.805±0.044
+Linear Probe (ESM),0.768±0.057,0.941±0.057,0.897±0.003,0.975±0.025,12.329±0.042,0.469±0.118,0.241±0.052,—
+GNN (SoftBlobGIN),0.489±0.065,0.999±0.001,0.336±0.086,1.000±0.000,16.253±2.953,0.124±0.136,0.080±0.044,—

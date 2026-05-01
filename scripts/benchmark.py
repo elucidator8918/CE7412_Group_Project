@@ -61,7 +61,7 @@ TASK_CLASSES = {
 }
 
 TASK_METRICS = {
-    "EnzymeClassTask": "accuracy",
+    "EnzymeClassTask": "accuracy",   # multiclass (7 EC classes, single label) — official ProteinShake metric
     "GeneOntologyTask": "fmax",
     "ProteinFamilyTask": "accuracy",
     "StructuralClassTask": "accuracy",
@@ -71,6 +71,23 @@ TASK_METRICS = {
     "StructureSimilarityTask": "spearman",
     "StructureSearchTask": "precision_at_k",
 }
+
+
+def compute_f1_max(y_true, y_prob):
+    """Maximum F1 over all thresholds (Fmax) — standard multilabel protein function metric."""
+    from sklearn.metrics import precision_recall_fscore_support
+    thresholds = np.linspace(0, 1, 101)
+    f1s = []
+    for t in thresholds:
+        y_pred = (y_prob >= t).astype(int)
+        _, _, f, _ = precision_recall_fscore_support(y_true, y_pred, average="micro", zero_division=0)
+        f1s.append(f)
+    return float(max(f1s))
+
+
+def compute_auprc_micro(y_true, y_prob):
+    from sklearn.metrics import average_precision_score
+    return float(average_precision_score(y_true, y_prob, average="micro"))
 
 
 def setup_logging(log_dir):
@@ -204,22 +221,25 @@ def evaluate_task(model, loader, task_type, device, task_obj=None):
         y_prob = np.vstack(all_prob)
         y_pred = (y_prob > 0.5).astype(int)
 
-        metrics = {}
+        # Always compute Fmax and AUPRC — the standard metrics for multilabel protein function tasks.
+        metrics = {
+            "fmax":  compute_f1_max(y_true, y_prob),
+            "auprc": compute_auprc_micro(y_true, y_prob),
+        }
         if task_obj is not None:
             try:
                 official = task_obj.evaluate(task_obj.test_targets, y_pred)
-                metrics.update({k: float(v) for k, v in official.items()})
-            except Exception as e:
-                # Try with probabilities
+                for k, v in official.items():
+                    if k not in metrics:
+                        metrics[k] = float(v)
+            except Exception:
                 try:
                     official = task_obj.evaluate(task_obj.test_targets, y_prob)
-                    metrics.update({k: float(v) for k, v in official.items()})
+                    for k, v in official.items():
+                        if k not in metrics:
+                            metrics[k] = float(v)
                 except Exception:
                     pass
-        if not metrics:
-            from sklearn.metrics import f1_score
-            metrics["f1_micro"] = float(f1_score(y_true, y_pred, average="micro", zero_division=0))
-            metrics["f1_macro"] = float(f1_score(y_true, y_pred, average="macro", zero_division=0))
         return metrics
 
     elif task_type == "graph_regression" or "pair" in str(task_type):

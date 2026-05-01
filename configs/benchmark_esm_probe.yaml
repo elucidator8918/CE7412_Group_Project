@@ -1,0 +1,83 @@
+# ============================================================================
+# BENCHMARK CONFIG — ESM-2 + Linear Probe baseline
+#
+# Frozen ESM-2 (650M) per-residue embeddings → mean-pool → single linear layer.
+# Same tasks, splits, and evaluation as benchmark.yaml (SoftBlobGIN).
+#
+# Purpose: establishes the sequence-only ceiling so that GNN gains are
+# attributable purely to 3-D structure rather than to ESM-2 features.
+# ============================================================================
+
+seed: 42
+
+paths:
+  data_root: "./data"
+  output_dir: "./outputs_benchmark_esm_probe"
+  # Reuse the same ESM-2 cache as the main benchmark — no re-extraction needed.
+  esm_cache: "./data/esm_cache_650M"
+  log_dir: "./outputs_benchmark_esm_probe/logs"
+  checkpoint_dir: "./outputs_benchmark_esm_probe/checkpoints"
+  figures_dir: "./outputs_benchmark_esm_probe/figures"
+
+dataset:
+  eps_default: 8.0
+  split: "random"
+  split_similarity_threshold: 0.7
+
+# ESM-2 only — all structural/hand-crafted features disabled.
+# feat_dim = 1280 (ESM-2 650M hidden size).
+features:
+  use_onehot: false
+  use_physicochemical: false
+  use_sasa: false
+  use_esm2: true
+  esm2_model: "esm2_t33_650M_UR50D"
+  esm2_layer: 33
+  esm2_dim: 1280
+  use_degree: false
+  use_positional: false
+  use_edge_distance: false
+  use_edge_seqsep: false
+
+model_type: "esm_probe"
+
+# Training — higher LR is appropriate for a single linear layer; early
+# stopping usually kicks in well before 200 epochs.
+training:
+  epochs: 200
+  batch_size: 64
+  optimizer: "adamw"
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  gradient_clip: 1.0
+  scheduler: "cosine_warmup"
+  warmup_epochs: 5
+  min_lr: 1.0e-6
+  patience: 20
+  min_delta: 1.0e-4
+  loss: "cross_entropy"
+  label_smoothing: 0.0
+  augmentation:
+    enabled: false   # No graph augmentation — ESM probe doesn't use edge structure
+
+# Same task set as benchmark.yaml for direct comparison.
+benchmark_tasks:
+  - EnzymeClassTask
+  - GeneOntologyTask
+  - ProteinFamilyTask
+  - StructuralClassTask
+  - LigandAffinityTask
+  - BindingSiteDetectionTask
+  - ProteinProteinInterfaceTask
+  - StructureSimilarityTask
+  - StructureSearchTask
+
+logging:
+  save_best_model: true
+  save_last_model: false
+
+task_overrides:
+  ProteinProteinInterfaceTask:
+    batch_size: 4
+  GeneOntologyTask:
+    batch_size: 32
