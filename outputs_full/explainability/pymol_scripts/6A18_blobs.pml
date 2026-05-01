@@ -1,0 +1,50 @@
+# SoftBlobGIN blob visualization for 6A18
+# Generated automatically — open in PyMOL
+
+fetch 6a18, async=0
+remove not chain A
+hide everything
+show cartoon, chain A
+color gray80, chain A
+
+# Color residues by blob assignment
+select blob1, chain A and resi 20+22+45+54+256+260+312+342+346+417+420+421+425
+color red, blob1
+# Blob 1: 13 residues, importance=0.7344
+select blob2, chain A and resi 19+29+92+148+267+311+315+343+352+381
+color orange, blob2
+# Blob 2: 10 residues, importance=0.0078
+select blob3, chain A and resi 28+41+42+91+121+140+261+316+344+348+350+419+431
+color yellow, blob3
+# Blob 3: 13 residues, importance=0.0000
+select blob4, chain A and resi 15+36+43+60+73+76+108+139+145+153+173+223+227+242+245+246+264+268+278+280+313+323+327+351+418+426
+color green, blob4
+# Blob 4: 26 residues, importance=0.0078
+select blob5, chain A and resi 21+23+144+253+259+263+265+428+430
+color cyan, blob5
+# Blob 5: 9 residues, importance=0.0078
+select blob6, chain A and resi 27+44+53+57+74+75+141+322+324+349+382+427
+color blue, blob6
+# Blob 6: 12 residues, importance=0.0117
+select blob7, chain A and resi 1+2+3+4+5+6+7+8+9+10+11+12+13+14+17+18+24+25+26+30+31+32+33+34+35+37+38+39+40+46+47+48+49+50+51+59+62+63+66+69+70+72+77+78+79+80+81+82+83+84+85+86+87+88+89+90+93+94+95+96+97+98+99+100+101+102+103+104+105+106+109+111+112+117+120+122+123+125+126+127+128+129+130+131+132+133+134+135+136+137+138+142+146+147+149+150+152+154+156+157+158+159+160+161+163+164+165+166+167+168+169+170+171+176+177+178+179+180+181+182+183+184+185+186+187+188+189+190+191+192+193+196+197+198+199+200+202+203+204+205+206+207+208+209+210+211+212+213+214+215+216+217+218+219+220+221+222+228+229+230+231+233+234+235+236+237+238+239+243+247+248+249+250+251+252+254+262+269+270+271+273+274+275+277+279+281+282+283+284+285+286+287+288+289+290+291+292+293+294+295+296+297+298+299+300+301+302+303+304+306+309+310+314+319+320+321+326+328+330+331+332+333+334+335+336+338+339+340+341+345+347+354+355+356+358+359+360+361+362+363+364+365+366+367+368+369+370+371+372+373+374+375+378+383+384+385+386+387+388+389+390+391+392+393+394+395+396+397+398+399+400+401+402+403+404+405+407+408+409+410+411+412+413+414+415+416+423+429+432+433+434+435+436+437+438+439
+color purple, blob7
+# Blob 7: 296 residues, importance=0.1797
+select blob8, chain A and resi 16+52+55+56+58+61+64+65+67+68+71+107+110+113+114+115+116+118+119+124+143+151+155+162+172+174+175+194+195+201+224+225+226+232+240+241+244+255+257+258+266+272+276+305+307+308+317+318+325+329+337+353+357+376+377+379+380+406+422+424
+color white, blob8
+# Blob 8: 60 residues, importance=0.0508
+
+# Active/binding site residues
+select active_site, chain A and resi 436
+show sticks, active_site
+color magenta, active_site
+set stick_radius, 0.15, active_site
+
+# Domain boundaries
+# Domain 0: residues 14-439
+
+# Final styling
+set cartoon_transparency, 0.3
+set ray_shadow, 0
+bg_color white
+orient
+zoom chain A
