@@ -144,9 +144,14 @@ def extract_blob_batch(model, graphs: list, device: torch.device,
 
 def compute_blob_importance(model, data: Data, device: torch.device,
                             n_blobs: int) -> np.ndarray:
-    """Compute per-blob importance by masking each blob and measuring prediction drop.
+    """Compute per-blob importance scores (analogous to π_t in BioBlobs).
 
-    Returns [K] array where higher = more important blob.
+    Two complementary methods:
+    1. Max-pool contribution: which blob "wins" the max-pool most often
+       across hidden dimensions — this is the direct π_t analog.
+    2. Ablation: mask each blob's features and measure confidence drop.
+
+    Returns [K] array combining both signals.
     """
     model.eval()
     data = data.clone().to(device)
@@ -159,20 +164,39 @@ def compute_blob_importance(model, data: Data, device: torch.device,
         pred_class = orig_logits.argmax(dim=1).item()
         orig_conf = orig_prob[0, pred_class].item()
 
-        # Get blob assignments
-        _, assign = model(data, return_blobs=True)
+        # Get blob assignments and embeddings
+        x, batch = model._encode(data)
+        logits_blob = model.blob_head(x)
+        assign = F.softmax(logits_blob, dim=-1)  # use softmax at inference
         hard = assign.argmax(dim=1).cpu().numpy()
 
-    # Mask each blob by zeroing its residue features
-    importance = np.zeros(n_blobs)
+        # Compute blob embeddings
+        mask = (batch == 0)
+        x_b = x[mask]
+        a_b = assign[mask]
+        weights = a_b.T / (a_b.T.sum(dim=1, keepdim=True) + 1e-8)
+        blobs = weights @ x_b  # [K, hidden]
+        blobs = model.blob_ln(model.blob_mlp(blobs))  # [K, hidden]
+
+        # Method 1: Max-pool contribution (π_t analog)
+        # For each hidden dimension, which blob provides the max value?
+        # π_t[k] = fraction of hidden dims where blob k is the argmax
+        blob_argmax = blobs.argmax(dim=0)  # [hidden] — which blob wins each dim
+        pi_t = torch.zeros(n_blobs, device=device)
+        for k in range(n_blobs):
+            pi_t[k] = (blob_argmax == k).float().mean()
+        pi_t = pi_t.cpu().numpy()
+
+    # Method 2: Ablation importance
+    ablation_imp = np.zeros(n_blobs)
     for k in range(n_blobs):
-        mask = hard == k
-        if mask.sum() == 0:
+        blob_mask = hard == k
+        if blob_mask.sum() == 0:
             continue
 
         masked_data = data.clone()
         x_masked = masked_data.x.float().clone()
-        x_masked[mask] = 0.0
+        x_masked[blob_mask] = 0.0
         masked_data.x = x_masked
 
         with torch.no_grad():
@@ -180,9 +204,11 @@ def compute_blob_importance(model, data: Data, device: torch.device,
             masked_prob = F.softmax(masked_logits, dim=1)
             masked_conf = masked_prob[0, pred_class].item()
 
-        importance[k] = orig_conf - masked_conf  # positive = blob was important
+        ablation_imp[k] = orig_conf - masked_conf
 
-    return importance
+    # Combine: use π_t as primary (it's the direct BioBlobs analog),
+    # ablation as secondary signal
+    return pi_t, ablation_imp
 
 
 def aggregate_blob_stats(blob_results: list, labels: np.ndarray,

@@ -1074,6 +1074,251 @@ def plot_physicochemical_importance(explanations: list, graphs: list,
 
 
 # ============================================================================
+# Domain overlap plots
+# ============================================================================
+
+def plot_domain_overlap_table(overlap_results: list, pdb_ids: list,
+                              labels: np.ndarray, n_classes: int, out_dir: str):
+    """Table figure showing Jaccard and ARI per protein with domain annotations."""
+    valid = [(pid, ov, int(lab)) for pid, ov, lab in zip(pdb_ids, overlap_results, labels)
+             if not np.isnan(ov.get("jaccard", float("nan"))) and ov["n_annotated"] > 0]
+    if not valid:
+        logger.info("  No proteins with domain annotations found, skipping overlap table.")
+        return
+
+    fig, ax = plt.subplots(figsize=(12, max(4, 0.4 * len(valid))))
+    ax.axis("off")
+
+    col_labels = ["PDB ID", "EC", "Domains", "Annotated", "Jaccard", "ARI", "Mean Purity"]
+    rows = []
+    for pid, ov, lab in valid:
+        purity = ov.get("blob_purity", [])
+        mean_pur = np.nanmean(purity) if purity else float("nan")
+        rows.append([
+            pid, f"EC{lab+1}", str(ov.get("n_domains", 0)),
+            str(ov["n_annotated"]),
+            f"{ov['jaccard']:.3f}", f"{ov['ari']:.3f}", f"{mean_pur:.3f}"
+        ])
+
+    table = ax.table(cellText=rows, colLabels=col_labels, loc="center",
+                     cellLoc="center")
+    table.auto_set_font_size(False)
+    table.set_fontsize(8)
+    table.scale(1, 1.4)
+
+    # Color header
+    for j in range(len(col_labels)):
+        table[0, j].set_facecolor("#4C72B0")
+        table[0, j].set_text_props(color="white", fontweight="bold")
+
+    ax.set_title("Blob-to-Domain Overlap (Pfam/CATH)", fontweight="bold",
+                 fontsize=12, pad=20)
+    plt.tight_layout()
+    save_fig(fig, out_dir, "fig_domain_overlap_table.png")
+
+
+def plot_importance_vs_active_site(corr_results: list, pdb_ids: list,
+                                    labels: np.ndarray, out_dir: str):
+    """Per-protein active-blob rank analysis: does the active-site blob rank
+    higher in π_t than the other blobs?
+
+    Three panels:
+      1. Rank distribution — how often is the active blob ranked 1st, 2nd, …?
+      2. Paired comparison — π_t[active blob] vs π_t[other blobs mean] per protein
+      3. Per-class mean δ — which EC classes show the effect most strongly?
+    """
+    valid = [(c, int(lab)) for c, lab in zip(corr_results, labels)
+             if c is not None and "pi_t_rank" in c]
+
+    if not valid:
+        logger.info("  No active site data available, skipping importance correlation plot.")
+        return
+
+    from scipy.stats import wilcoxon, spearmanr
+
+    corrs, labs = zip(*valid)
+    ranks        = np.array([c["pi_t_rank"]        for c in corrs])
+    pi_t_active  = np.array([c["pi_t_active_blob"] for c in corrs])
+    pi_t_others  = np.array([c["pi_t_others_mean"] for c in corrs])
+    deltas       = pi_t_active - pi_t_others
+    enrichments  = np.array([c["enrichment"]       for c in corrs])
+    n_blobs      = len(corrs[0]["blob_importance"])
+    n            = len(corrs)
+
+    try:
+        _, wilcox_p = wilcoxon(pi_t_active, pi_t_others, alternative="greater")
+    except Exception:
+        wilcox_p = float("nan")
+    try:
+        rho, rho_p = spearmanr(ranks, enrichments)
+    except Exception:
+        rho, rho_p = float("nan"), float("nan")
+
+    n_higher = (deltas > 0).sum()
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+
+    # ── Panel 1: Rank distribution ──────────────────────────────────────────
+    ax = axes[0]
+    rank_counts = np.array([int((ranks == k).sum()) for k in range(1, n_blobs + 1)])
+    bars = ax.bar(range(1, n_blobs + 1), rank_counts,
+                  color=[PALETTE[k % len(PALETTE)] for k in range(n_blobs)],
+                  edgecolor="white", linewidth=0.5)
+    ax.axhline(n / n_blobs, color="gray", ls="--", lw=1.5, label=f"Random baseline ({n/n_blobs:.1f})")
+    ax.set_xlabel("π_t rank of active-site blob")
+    ax.set_ylabel("Number of proteins")
+    ax.set_xticks(range(1, n_blobs + 1))
+    ax.set_xticklabels([f"Rank {k}" for k in range(1, n_blobs + 1)], rotation=30, ha="right")
+    ax.set_title("Active-Site Blob π_t Rank\nacross Proteins", fontweight="bold")
+    ax.legend(fontsize=8)
+    ax.grid(axis="y", alpha=0.3)
+    # Annotate cumulative top-2 %
+    top2_pct = (ranks <= 2).sum() / n * 100
+    ax.text(0.97, 0.97, f"Top-2: {top2_pct:.0f}% of proteins\nMean rank: {ranks.mean():.2f}",
+            transform=ax.transAxes, ha="right", va="top", fontsize=9,
+            bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.7))
+
+    # ── Panel 2: Paired π_t comparison ────────────────────────────────────
+    ax = axes[1]
+    for i, (pa, po, lab) in enumerate(zip(pi_t_active, pi_t_others, labs)):
+        color = PALETTE[lab % len(PALETTE)]
+        ax.plot([0, 1], [po, pa], color=color, alpha=0.35, lw=1)
+        ax.scatter([0], [po], color=color, s=25, alpha=0.7, zorder=3)
+        ax.scatter([1], [pa], color=color, s=25, alpha=0.7, zorder=3)
+    # Mean lines
+    ax.plot([0, 1], [pi_t_others.mean(), pi_t_active.mean()],
+            color="black", lw=2.5, zorder=4, label="Mean")
+    ax.scatter([0, 1], [pi_t_others.mean(), pi_t_active.mean()],
+               color="black", s=60, zorder=5)
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels(["Other blobs\n(mean π_t)", "Active-site blob\n(π_t)"], fontsize=10)
+    ax.set_ylabel("π_t (blob importance)")
+    ax.set_title(f"π_t: Active-Site Blob vs Others\n"
+                 f"Higher in {n_higher}/{n} proteins  |  Wilcoxon p={wilcox_p:.3f}",
+                 fontweight="bold")
+    ax.legend(fontsize=8)
+    ax.grid(axis="y", alpha=0.3)
+
+    # ── Panel 3: Per-class mean δ ─────────────────────────────────────────
+    ax = axes[2]
+    ec_names = ["EC1\nOxidoreductase", "EC2\nTransferase", "EC3\nHydrolase",
+                "EC4\nLyase", "EC5\nIsomerase", "EC6\nLigase", "EC7\nTranslocase"]
+    class_deltas = []
+    class_ns = []
+    for c in range(7):
+        mask = [i for i, l in enumerate(labs) if l == c]
+        if mask:
+            class_deltas.append(float(deltas[mask].mean()))
+            class_ns.append(len(mask))
+        else:
+            class_deltas.append(float("nan"))
+            class_ns.append(0)
+
+    x = np.arange(7)
+    bar_colors = [PALETTE[c] for c in range(7)]
+    valid_mask = [not np.isnan(d) for d in class_deltas]
+    ax.bar(x[valid_mask], [class_deltas[i] for i in range(7) if valid_mask[i]],
+           color=[bar_colors[i] for i in range(7) if valid_mask[i]],
+           edgecolor="white", linewidth=0.5)
+    ax.axhline(0, color="black", lw=1)
+    ax.set_xticks(x[valid_mask])
+    ax.set_xticklabels([ec_names[i] for i in range(7) if valid_mask[i]],
+                       rotation=30, ha="right", fontsize=8)
+    ax.set_ylabel("Mean δ = π_t[active] − π_t[others]")
+    ax.set_title("Mean π_t Advantage of Active-Site Blob\nper EC Class", fontweight="bold")
+    ax.grid(axis="y", alpha=0.3)
+    for i in range(7):
+        if valid_mask[i] and class_ns[i] > 0:
+            ax.text(i if i <= max(j for j in range(7) if valid_mask[j]) else i,
+                    0.002, f"n={class_ns[i]}", ha="center", va="bottom", fontsize=7)
+
+    fig.suptitle(
+        f"Active-Site Blob π_t Analysis  |  "
+        f"Mean rank {ranks.mean():.2f}/{n_blobs} (random={( n_blobs+1)/2:.1f})  |  "
+        f"Spearman ρ={rho:.3f} (p={rho_p:.3f})",
+        fontweight="bold", fontsize=11
+    )
+    plt.tight_layout()
+    save_fig(fig, out_dir, "fig_importance_vs_active_site.png")
+
+
+def plot_case_study_blobs(blob_results: list, pdb_ids: list,
+                          blob_importances: list, annotations: dict,
+                          n_cases: int, out_dir: str):
+    """2D sequence-level case study: blob assignments with domain boundaries."""
+    # Select case studies: proteins with most domain annotations
+    scored = []
+    for i, (br, pid) in enumerate(zip(blob_results, pdb_ids)):
+        ann = annotations.get(pid)
+        n_domains = 0
+        if ann:
+            n_domains = len(ann.pfam_domains) + len(ann.cath_domains)
+        scored.append((n_domains, i))
+    scored.sort(reverse=True)
+    cases = [idx for _, idx in scored[:n_cases]]
+
+    if not cases:
+        return
+
+    blob_cmap = plt.cm.Set2
+    n_rows = len(cases)
+    fig, axes = plt.subplots(n_rows, 1, figsize=(14, 2.5 * n_rows))
+    if n_rows == 1:
+        axes = [axes]
+
+    for row, idx in enumerate(cases):
+        ax = axes[row]
+        br = blob_results[idx]
+        pid = pdb_ids[idx]
+        imp = blob_importances[idx]
+        ann = annotations.get(pid)
+
+        n = br.n_nodes
+        K = br.n_blobs
+
+        # Blob assignments
+        positions = np.arange(n)
+        bottom = np.zeros(n)
+        for k in range(K):
+            ax.bar(positions, br.assignments[:, k], bottom=bottom,
+                   color=blob_cmap(k / K), width=1.0, linewidth=0)
+            bottom += br.assignments[:, k]
+
+        # Domain boundaries
+        if ann:
+            domains = ann.pfam_domains or ann.cath_domains
+            for d_idx, (did, dname, start, end) in enumerate(domains):
+                s = max(0, start - 1)
+                e = min(n, end)
+                ax.axvline(s, color="black", lw=1.5, ls="--", alpha=0.8)
+                ax.axvline(e, color="black", lw=1.5, ls="--", alpha=0.8)
+                mid = (s + e) / 2
+                label = dname[:20] if dname else did
+                ax.text(mid, 1.05, label, ha="center", fontsize=7,
+                        fontweight="bold", color="black")
+
+            # Active site markers
+            for res in ann.active_site_residues:
+                r = res - 1  # 0-indexed
+                if 0 <= r < n:
+                    ax.axvline(r, color="magenta", lw=1, alpha=0.6)
+
+        # Most important blob annotation
+        best_blob = np.argmax(imp)
+        ax.set_xlim(0, n)
+        ax.set_ylim(0, 1.15)
+        ax.set_ylabel(f"{pid}\nEC{br.true_label+1}", fontsize=8, fontweight="bold")
+        if row == n_rows - 1:
+            ax.set_xlabel("Residue position")
+
+    fig.suptitle("Case Studies: Blob Assignments with Domain Boundaries\n"
+                 "(dashed = domain boundaries, magenta = active site)",
+                 fontweight="bold", fontsize=12)
+    plt.tight_layout()
+    save_fig(fig, out_dir, "fig_case_study_blobs.png")
+
+
+# ============================================================================
 # Class prototype comparison
 # ============================================================================
 

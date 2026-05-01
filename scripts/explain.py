@@ -47,12 +47,15 @@ from src.explainability.visualization import (
     plot_blob_sasa_profiles,
     plot_blob_spatial_coherence,
     plot_blob_summary,
+    plot_case_study_blobs,
     plot_class_prototypes,
     plot_contact_distance_distribution,
+    plot_domain_overlap_table,
     plot_edge_importance_examples,
     plot_fidelity_curves,
     plot_feature_group_importance,
     plot_gin_blob_overlap,
+    plot_importance_vs_active_site,
     plot_method_comparison,
     plot_physicochemical_importance,
     plot_position_importance,
@@ -68,6 +71,13 @@ from src.explainability.blob_analysis import (
     compute_blob_aa_enrichment,
     compute_blob_sasa_profiles,
     compute_gin_blob_overlap,
+)
+from src.explainability.domain_overlap import (
+    fetch_annotations_batch,
+    build_residue_domain_labels,
+    compute_domain_blob_overlap,
+    compute_importance_functional_correlation,
+    generate_pymol_script,
 )
 
 
@@ -441,14 +451,19 @@ def main():
                                           verbose=True)
 
         # Compute blob importance (which blobs matter most per protein)
-        logger.info("  Computing blob importance...")
-        blob_importances = []
+        logger.info("  Computing blob importance (\u03c0_t + ablation)...")
+        blob_pi_t = []       # max-pool contribution (BioBlobs π_t analog)
+        blob_ablation = []   # ablation importance
         for i, data in enumerate(sample_graphs):
-            imp = compute_blob_importance(blob_model, data, device,
-                                          n_blobs=sb_cfg["n_blobs"])
-            blob_importances.append(imp)
+            pi_t, abl_imp = compute_blob_importance(blob_model, data, device,
+                                                     n_blobs=sb_cfg["n_blobs"])
+            blob_pi_t.append(pi_t)
+            blob_ablation.append(abl_imp)
             if (i + 1) % 20 == 0:
                 logger.info(f"    Blob importance {i+1}/{len(sample_graphs)}")
+
+        # Use pi_t as the primary importance (direct BioBlobs analog)
+        blob_importances = blob_pi_t
 
         # Aggregate stats per class
         blob_stats = aggregate_blob_stats(blob_results, sample_labels,
@@ -502,9 +517,129 @@ def main():
             mean_jaccard = np.nanmean([j for j, _ in overlaps])
             logger.info(f"  Mean Jaccard overlap (GIN important vs SoftBlobGIN top blob): {mean_jaccard:.3f}")
 
+        # ── Domain overlap analysis (TODO 2) ──────────────────────────
+        logger.info("\n  Domain overlap analysis (Pfam/CATH)...")
+
+        # Get PDB IDs from the raw ProteinShake data
+        pdb_ids = []
+        raw_pyg = dataset.raw_pyg
+        for local_idx in sample_idx:
+            # sample_idx indexes into test_graphs, test_idx maps to all_graphs/raw_pyg
+            global_idx = dataset.test_idx[local_idx] if local_idx < len(dataset.test_idx) else -1
+            if 0 <= global_idx < len(raw_pyg):
+                _, prot = raw_pyg[global_idx]
+                pid = str(prot["protein"].get("ID", f"prot_{global_idx}"))
+                pdb_ids.append(pid)
+            else:
+                pdb_ids.append(f"prot_{local_idx}")
+
+        # Fetch domain annotations from PDBe SIFTS API
+        domain_cache = str(Path(cfg["paths"]["data_root"]) / "domain_cache")
+        logger.info(f"    Fetching domain annotations (cache: {domain_cache})...")
+        annotations = fetch_annotations_batch(pdb_ids, cache_dir=domain_cache,
+                                               verbose=True)
+
+        # Compute overlap metrics
+        overlap_results = []
+        corr_results = []
+        for i, (br, imp, pid) in enumerate(zip(blob_results, blob_importances, pdb_ids)):
+            ann = annotations.get(pid)
+            if ann is None or (not ann.pfam_domains and not ann.cath_domains):
+                overlap_results.append({"jaccard": float("nan"), "ari": float("nan"),
+                                        "n_annotated": 0, "blob_purity": []})
+                corr_results.append(None)
+                continue
+
+            domain_labels = build_residue_domain_labels(ann, br.n_nodes)
+            ov = compute_domain_blob_overlap(br.hard_assignments, domain_labels)
+            overlap_results.append(ov)
+
+            # Importance vs active site correlation
+            if ann.active_site_residues:
+                corr = compute_importance_functional_correlation(
+                    imp, br.hard_assignments, ann.active_site_residues, n_blobs
+                )
+                corr_results.append(corr)
+            else:
+                corr_results.append(None)
+
+        # Log results
+        valid_ov = [ov for ov in overlap_results if not np.isnan(ov.get("jaccard", float("nan")))]
+        if valid_ov:
+            mean_j = np.mean([ov["jaccard"] for ov in valid_ov])
+            mean_ari = np.mean([ov["ari"] for ov in valid_ov])
+            logger.info(f"    Proteins with domain annotations: {len(valid_ov)}/{len(overlap_results)}")
+            logger.info(f"    Mean Jaccard (blob vs domain): {mean_j:.3f}")
+            logger.info(f"    Mean ARI (blob vs domain): {mean_ari:.3f}")
+        else:
+            logger.info("    No proteins with domain annotations found.")
+
+        # Importance vs active site — per-protein active-blob rank test
+        valid_corr = [c for c in corr_results if c is not None]
+        if valid_corr:
+            from scipy.stats import wilcoxon, spearmanr as sp_r
+            n_corr = len(valid_corr)
+            pi_t_active_arr = np.array([c["pi_t_active_blob"] for c in valid_corr])
+            pi_t_others_arr = np.array([c["pi_t_others_mean"] for c in valid_corr])
+            deltas = pi_t_active_arr - pi_t_others_arr
+            ranks = np.array([c["pi_t_rank"] for c in valid_corr])
+            enrichments = np.array([c["enrichment"] for c in valid_corr])
+            n_higher = (deltas > 0).sum()
+            try:
+                _, wilcox_p = wilcoxon(pi_t_active_arr, pi_t_others_arr, alternative="greater")
+            except Exception:
+                wilcox_p = float("nan")
+            try:
+                rho, rho_p = sp_r(ranks, enrichments)
+            except Exception:
+                rho, rho_p = float("nan"), float("nan")
+            logger.info(f"    Proteins with active site annotations: {n_corr}")
+            logger.info(f"    Active blob has higher π_t: {n_higher}/{n_corr} ({n_higher/n_corr*100:.1f}%)")
+            logger.info(f"    Mean π_t[active blob]: {pi_t_active_arr.mean():.4f}  "
+                        f"Mean π_t[others]: {pi_t_others_arr.mean():.4f}  "
+                        f"Mean δ: {deltas.mean():+.4f}")
+            logger.info(f"    Mean rank of active blob: {ranks.mean():.2f} / {n_blobs} "
+                        f"(random baseline = {(n_blobs + 1) / 2:.1f})")
+            logger.info(f"    Wilcoxon p (active > others, one-sided): {wilcox_p:.4f}")
+            logger.info(f"    Spearman ρ (rank vs enrichment): {rho:.3f}  p={rho_p:.4f}")
+
+        # Plots
+        plot_domain_overlap_table(overlap_results, pdb_ids, sample_labels,
+                                  dataset.n_classes, fig_dir)
+        plot_importance_vs_active_site(corr_results, pdb_ids, sample_labels, fig_dir)
+        plot_case_study_blobs(blob_results, pdb_ids, blob_importances,
+                              annotations, n_cases=10, out_dir=fig_dir)
+
+        # Generate PyMOL scripts for case studies
+        pymol_dir = explain_dir / "pymol_scripts"
+        pymol_dir.mkdir(parents=True, exist_ok=True)
+        n_pymol = 0
+        for i, (br, imp, pid) in enumerate(zip(blob_results, blob_importances, pdb_ids)):
+            ann = annotations.get(pid)
+            if ann and (ann.pfam_domains or ann.cath_domains or ann.active_site_residues):
+                domain_labels = build_residue_domain_labels(ann, br.n_nodes)
+                generate_pymol_script(
+                    pid, br.hard_assignments, imp,
+                    domain_labels=domain_labels,
+                    active_site_residues=ann.active_site_residues,
+                    out_path=str(pymol_dir / f"{pid}_blobs.pml"),
+                )
+                n_pymol += 1
+                if n_pymol >= 10:
+                    break
+        logger.info(f"    Generated {n_pymol} PyMOL scripts in {pymol_dir}")
+
+        # Save domain overlap data
+        domain_rows = []
+        for pid, ov in zip(pdb_ids, overlap_results):
+            domain_rows.append({"pdb_id": pid, **ov})
+        pd.DataFrame(domain_rows).to_csv(
+            explain_dir / "domain_overlap_metrics.csv", index=False
+        )
+
         # Save blob data
         blob_summary_rows = []
-        for br, imp in zip(blob_results, blob_importances):
+        for br, pi_t, abl in zip(blob_results, blob_pi_t, blob_ablation):
             blob_summary_rows.append({
                 "protein_idx": br.protein_idx,
                 "true_label": br.true_label,
@@ -512,7 +647,8 @@ def main():
                 "predicted_prob": br.predicted_prob,
                 "n_nodes": br.n_nodes,
                 "blob_sizes": br.blob_sizes.tolist(),
-                "blob_importance": imp.tolist(),
+                "blob_pi_t": pi_t.tolist(),
+                "blob_ablation_importance": abl.tolist(),
             })
         with open(explain_dir / "softblobgin_blob_analysis.json", "w") as f:
             json.dump(blob_summary_rows, f, indent=2)
