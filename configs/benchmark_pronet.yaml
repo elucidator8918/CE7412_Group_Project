@@ -1,0 +1,93 @@
+# ============================================================================
+# BENCHMARK CONFIG — ProNet (dilated CNN on one-hot sequences) baseline
+#
+# Faithfully follows the ProNet training setup from ProNet/src/2_train.py:
+#   AdamW (lr=1e-3, default weight_decay=1e-2), cosine warmup (1000 steps),
+#   batch_size=100 in original (reduced to 64 for memory compatibility).
+#
+# Same tasks, splits, and evaluation metrics as benchmark.yaml (SoftBlobGIN),
+# allowing direct sequence-only vs. structure-aware comparison.
+# ============================================================================
+
+seed: 42
+
+paths:
+  data_root: "./data"
+  output_dir: "./outputs_benchmark_pronet"
+  esm_cache: "./data/esm_cache_650M"
+  log_dir: "./outputs_benchmark_pronet/logs"
+  checkpoint_dir: "./outputs_benchmark_pronet/checkpoints"
+  figures_dir: "./outputs_benchmark_pronet/figures"
+
+dataset:
+  eps_default: 8.0
+  split: "random"
+  split_similarity_threshold: 0.7
+
+# ProNet uses ONLY residue one-hot (20-dim) — no structural features at all.
+# Exactly matches the original ProNet paper: the model operates on sequence alone.
+features:
+  use_onehot: true
+  use_physicochemical: false
+  use_sasa: false
+  use_esm2: false
+  use_degree: false
+  use_positional: false
+  use_edge_distance: false
+  use_edge_seqsep: false
+
+model_type: "pronet"
+
+# ProNet architecture — original constants from ProNet/src/pronet.py
+# L=64 channels, W=[11]*8+[21]*4+[41]*4 kernels, AR=[1]*4+[4]*4+[10]*4+[25]*4 dilations
+# max_seq_len extended from 600 (original fixed-length) to 1024 for ProteinShake's
+# longer proteins; global average pooling replaces the original flatten+Linear head.
+pronet:
+  max_seq_len: 1024
+  L: 64
+  input_channels: 20
+
+# Training — follows ProNet/src/2_train.py exactly where specified:
+#   optimizer: AdamW(lr=1e-3)  — weight_decay uses PyTorch AdamW default (1e-2)
+#   scheduler: cosine warmup (num_warmup_steps=1000); warmup_epochs=5 approximates
+#              this for our epoch-based scheduler with ProteinShake dataset sizes
+#   batch_size: 100 in original; 64 used here to match other benchmarks
+#   epochs: 200 with early stopping (original runs 10 epochs; extended for fair comparison)
+training:
+  epochs: 200
+  batch_size: 64
+  optimizer: "adamw"
+  lr: 1.0e-3
+  weight_decay: 1.0e-2
+  gradient_clip: 1.0
+  scheduler: "cosine_warmup"
+  warmup_epochs: 5
+  min_lr: 1.0e-6
+  patience: 20
+  min_delta: 1.0e-4
+  loss: "cross_entropy"
+  label_smoothing: 0.0
+  augmentation:
+    enabled: false
+
+# Same task set as benchmark.yaml for direct comparison.
+benchmark_tasks:
+  - EnzymeClassTask
+  - GeneOntologyTask
+  - ProteinFamilyTask
+  - StructuralClassTask
+  - LigandAffinityTask
+  - BindingSiteDetectionTask
+  - ProteinProteinInterfaceTask
+  - StructureSimilarityTask
+  - StructureSearchTask
+
+logging:
+  save_best_model: true
+  save_last_model: false
+
+task_overrides:
+  ProteinProteinInterfaceTask:
+    batch_size: 4
+  GeneOntologyTask:
+    batch_size: 32

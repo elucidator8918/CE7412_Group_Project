@@ -1,0 +1,99 @@
+# ============================================================================
+# BENCHMARK CONFIG — GearNet baseline across ProteinShake tasks
+# Uses the SAME data splits, tasks, and evaluation as benchmark.yaml
+# Architecture follows the official GearNet paper (Zhang et al., ICLR 2023)
+# ============================================================================
+
+seed: 42
+
+paths:
+  data_root: "./data"
+  output_dir: "./outputs_benchmark_gearnet"
+  esm_cache: "./data/esm_cache_650M"
+  log_dir: "./outputs_benchmark_gearnet/logs"
+  checkpoint_dir: "./outputs_benchmark_gearnet/checkpoints"
+  figures_dir: "./outputs_benchmark_gearnet/figures"
+
+dataset:
+  eps_default: 8.0
+  split: "random"
+  split_similarity_threshold: 0.7
+
+# Features — GearNet uses ONLY residue one-hot (21-dim) as node input
+# No ESM-2, no physicochemical, no SASA, no degree, no positional
+features:
+  use_onehot: true
+  use_physicochemical: false
+  use_sasa: false
+  use_esm2: false
+  use_degree: false
+  use_positional: false
+  use_edge_distance: false
+  rbf_centers: 16
+  rbf_sigma: 0.5
+  use_edge_seqsep: false
+
+# Model type — GearNet baseline
+model_type: "gearnet"
+
+# GearNet architecture — matches official config
+# (GearNet: 6×512 hidden, 7 relations, concat_hidden, sum readout)
+gearnet:
+  input_dim: 21          # residue one-hot (20 AA + 1 unknown)
+  hidden_dims: [512, 512, 512, 512, 512, 512]
+  num_relation: 7
+  batch_norm: true
+  concat_hidden: true
+  short_cut: true
+  readout: "sum"
+  dropout: 0.0
+  num_mlp_layer: 3
+  # Graph construction
+  radius: 10.0
+  knn_k: 10
+  max_seq_dist: 2
+  min_distance: 5
+
+# Training config — follows official GearNet paper settings
+training:
+  epochs: 200
+  batch_size: 8        # GearNet paper: batch_size 2 per GPU × 4 GPUs = 8
+  optimizer: "adamw"
+  lr: 1.0e-4           # official GearNet uses 1e-4
+  weight_decay: 0.0    # official GearNet uses 0
+  gradient_clip: 1.0
+  scheduler: "reduce_on_plateau"
+  scheduler_factor: 0.6
+  scheduler_patience: 5
+  patience: 30         # early stopping patience
+  min_delta: 1.0e-4
+  loss: "bce"          # GearNet paper uses BCE for EC/GO tasks
+  label_smoothing: 0.0
+  augmentation:
+    edge_drop_rate: 0.0
+    feature_mask_rate: 0.0
+    enabled: false     # GearNet doesn't use augmentation
+
+# Tasks to benchmark — same as our benchmark.yaml
+benchmark_tasks:
+  - EnzymeClassTask
+  - GeneOntologyTask
+  - ProteinFamilyTask
+  - StructuralClassTask
+  - LigandAffinityTask
+  - BindingSiteDetectionTask
+  # - ProteinProteinInterfaceTask  # skipped: OOM on single GPU
+  # - StructureSimilarityTask      # skipped: very slow pair task
+  # - StructureSearchTask          # skipped: very slow pair task
+
+logging:
+  save_best_model: true
+  save_last_model: false
+
+task_overrides:
+  ProteinProteinInterfaceTask:
+    batch_size: 2
+  GeneOntologyTask:
+    batch_size: 4
+  ProteinFamilyTask:
+    batch_size: 4
